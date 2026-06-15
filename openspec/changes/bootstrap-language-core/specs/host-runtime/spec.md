@@ -1,0 +1,49 @@
+## ADDED Requirements
+
+### Requirement: Host value model
+The interpreter SHALL evaluate the host language using a value model covering at minimum: `spark` (numeric), boolean, `glyph` (text), record values, variant values, `oracle` values, inferred values (see type-system), and a unit value. Every value SHALL report its type for use in diagnostics.
+
+#### Scenario: Evaluate primitive literals
+- **WHEN** the program evaluates `42`, `true`, and `"hex"`
+- **THEN** they produce a `spark`, a boolean, and a `glyph` value respectively
+
+#### Scenario: Construct and read a record
+- **WHEN** a record value is constructed and a field is read
+- **THEN** the field access yields the value assigned to that field
+
+### Requirement: Bindings and mutation
+`let` SHALL introduce an immutable binding; reassigning it SHALL be an error. `var` SHALL introduce a mutable binding that MAY be reassigned. Reading an undefined name SHALL raise a clear error naming the identifier.
+
+#### Scenario: let is immutable
+- **WHEN** a program declares `let x = 1` and later attempts `x = 2`
+- **THEN** the program reports an error stating a `let` binding cannot be reassigned
+
+#### Scenario: var is mutable
+- **WHEN** a program declares `var counter = 0` and later executes `counter = counter + 1`
+- **THEN** the value of `counter` becomes `1`
+
+### Requirement: Lexical scoping
+Names declared inside a `fn`, `while`, or `if` block SHALL be scoped to that block and its descendants and SHALL NOT leak into the enclosing scope. Inner scopes SHALL be able to read enclosing names and mutate enclosing `var`s.
+
+#### Scenario: Inner declaration does not leak
+- **WHEN** a name is declared with `let` inside a `while` body
+- **THEN** referencing it after the loop raises an undefined-identifier error
+
+#### Scenario: Inner scope mutates outer var
+- **WHEN** a `while` body assigns to a `var` declared in the enclosing scope
+- **THEN** the enclosing `var` reflects the mutation after the loop
+
+### Requirement: Functions and control flow
+A `fn` SHALL be callable with positional arguments, execute in a fresh scope, and return its result value (or unit). The interpreter SHALL evaluate `if`/`else`, `while` (re-checking the condition each iteration), arithmetic (`+ - * /`), comparison (`< <= > >= == !=`), and boolean (`and or not`, short-circuiting) operators, and `print` (textual rendering + newline). Division by zero SHALL raise a clean error, not a panic.
+
+#### Scenario: Function returns a value
+- **WHEN** `fn add(a, b) { a + b }` is called as `add(2, 3)`
+- **THEN** the call evaluates to `5`
+
+#### Scenario: while iterates until false
+- **WHEN** `var n = 0` and `while n < 3 { print n; n = n + 1 }` runs
+- **THEN** the program prints `0`, `1`, `2` and stops
+
+#### Scenario: Division by zero is a clean error
+- **WHEN** a program evaluates `1 / 0`
+- **THEN** the runtime raises a division-by-zero error rather than panicking

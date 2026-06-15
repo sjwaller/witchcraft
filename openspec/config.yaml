@@ -1,0 +1,57 @@
+schema: spec-driven
+
+context: |
+  Witchcraft is an AI-NATIVE programming language. The defining source of truth is the
+  discussion paper "Witchcraft: What Would an AI-Native Programming Language Actually
+  Make Primitive?" (Waller, 19-06-2025-witchcraft.md). Read it before designing anything.
+
+  THE THESIS (do not water this down):
+  - "AI-native" does NOT mean themed keywords over an inference SDK. A model call that
+    returns a string is sugar, not a primitive. The nativeness IS the type system.
+  - A construct is a genuine primitive (not sugar) per the paper's §4 discriminator:
+    the type system treats it specially; it makes new errors statically checkable; the
+    runtime is built around it; it composes; removing it forces every program to rebuild it.
+  - THE LITMUS TEST (§6.3): "If you deleted the type, would the computation at the moment
+    of inference change?" Prompt DSL: no. Witchcraft: YES, because the output type is
+    compiled into a generation-time constraint (constrained decoding), not validated after.
+  - The compiler verifies STRUCTURAL properties (discharge, scope, embedding space, agent
+    permits), NOT semantic correctness. A green build is not a correct model output (§8).
+  - The language exists FOR THE HUMAN who must read, constrain, and answer for what the
+    intelligence does (§9.1). Primitives serve that reader/responsibility-holder.
+
+  THE FOUR CANDIDATE PRIMITIVES (§5): oracle (model as a typed value), memory (governed
+  runtime resource with scope/retention/retrieval/audit), embedding (typed quantity
+  carrying its vector space), familiar (bounded agent with declared permits). The keystone
+  construct is `divine`: a typed inference region whose output type IS the spec, enforced
+  during decoding, returning a value that carries confidence + provenance, discharged via
+  `with confidence >= θ ... fallback`, executed via `enact` (exhaustive over variants).
+
+  Implementation strategy (decided):
+  - Implementation language: Rust. Tree-walking interpreter for the host language.
+  - The differentiator is the TYPE SYSTEM + constrained decoding, NOT a string-returning
+    oracle. Build those, not sugar.
+  - Determinism comes from a DETERMINISTIC, GRAMMAR-RESPECTING decoder (seeded), NOT from
+    fixed fixtures. This is the unlock: a fake that honours the compiled grammar means
+    deleting the type genuinely changes generation, so the litmus test passes deterministically.
+    Real model backends (Ollama/llama.cpp) slot behind the same decoder interface in v0.2+.
+
+  Naming policy (paper §7 — "keep the name, let the plumbing look like plumbing"):
+  - Occult vocabulary ONLY where it names something genuinely new: oracle, summon, divine,
+    enact, familiar, memory, embedding, permits, fallback. Type names spark (numeric) and
+    glyph (text) follow the paper's canonical §6.3 example.
+  - Plain vocabulary for the mundane (do NOT theme these): fn, let, var, while, print, if.
+  - CLI binary: `witch`. Build tool: Grimoire. Packages: Coven.
+
+  Scope discipline: small, verifiable changes. The acceptance bar for any AI primitive is
+  the paper's fault-injection test (§6.2): the native version must FAIL MORE SAFELY than a
+  library version, or it is decoration.
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+#     tasks:
+#       - Break tasks into chunks of max 2 hours

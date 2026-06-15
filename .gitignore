@@ -1,0 +1,10 @@
+# macOS
+.DS_Store
+
+# Archives / local backups
+openspec.zip
+*.zip
+
+# Rust build output (for when implementation lands)
+/target
+**/target
