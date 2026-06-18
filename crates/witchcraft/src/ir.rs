@@ -118,18 +118,76 @@ pub enum Instr {
         dst_val: Tmp,
         dst_conf: Tmp,
         grammar: GrammarId,
-        /// The oracle binding name and its model id, for provenance.
-        oracle: String,
-        model: String,
-        inputs: Vec<Operand>,
+        /// The semantic intent (the oracle's summon string). The manifest binds
+        /// it to a concrete engine; with no manifest the Mock serves it.
+        intent: String,
+        /// The evaluated `from (...)` input, rendered to a single glyph (the
+        /// prompt the engine receives). Inference is still a runtime call.
+        input: Operand,
     },
     /// Wrap a value + confidence into an inferred value (undischarged `divine`).
+    /// Provenance is taken from the immediately-preceding [`Instr::Decode`]
+    /// (the engine that produced the value), so it is faithful across engines.
     MakeInferred {
         dst: Tmp,
         val: Operand,
         conf: Operand,
+    },
+
+    /// A list literal `[a, b, ...]` (also produced by `nearest`/`recent`).
+    MakeList {
+        dst: Tmp,
+        items: Vec<Operand>,
+    },
+    /// `oracle.embed(input)` — a deterministic embedding in the oracle's space.
+    /// `oracle` is the binding name (provenance); `space` is the resolved model.
+    Embed {
+        dst: Tmp,
         oracle: String,
-        model: String,
+        space: String,
+        input: Operand,
+    },
+    /// `similarity(a, b)` — cosine similarity of two embeddings (a spark).
+    Similarity {
+        dst: Tmp,
+        lhs: Operand,
+        rhs: Operand,
+    },
+    /// `nearest(query, candidates, k)` — the k nearest candidate embeddings.
+    Nearest {
+        dst: Tmp,
+        query: Operand,
+        candidates: Operand,
+        k: Operand,
+    },
+
+    /// `memory <name> { scope, retention, audit }` registration.
+    MemRegister {
+        name: String,
+        scope: String,
+        retention: Option<f64>,
+        audit: bool,
+    },
+    /// `mem.write(value)` — append to a governed memory store.
+    MemWrite {
+        name: String,
+        value: Operand,
+    },
+    /// `mem.recent(k)` / `mem.nearest(..., k)` — newest-first retrieval (a list).
+    /// `method` is the source op name for the audit log.
+    MemRecent {
+        dst: Tmp,
+        name: String,
+        method: String,
+        k: Operand,
+    },
+    /// `advance(n)` — advance the logical clock (deterministic retention testing).
+    Advance {
+        n: Operand,
+    },
+    /// `audit_log()` — the accumulated audit records (a list of glyphs).
+    AuditLog {
+        dst: Tmp,
     },
 }
 
@@ -169,6 +227,17 @@ pub struct Function {
     pub entry: BlockId,
 }
 
+/// A program's inference need and the POLICY in force at its `divine` sites,
+/// derived from the source's capability grants. A compiled binary resolves every
+/// need against the manifest at load (refuse-to-start), exactly as the
+/// interpreter does.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Need {
+    pub intent: String,
+    pub allow_network: bool,
+    pub allow_downgrade: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct Program {
     /// User functions, by name.
@@ -179,6 +248,8 @@ pub struct Program {
     pub grammars: Vec<Grammar>,
     /// Interned variant names; a `VariantTagId` indexes this table.
     pub variant_names: Vec<String>,
+    /// Inference needs + policies, for load-time manifest resolution.
+    pub needs: Vec<Need>,
 }
 
 impl Function {

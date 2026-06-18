@@ -19,6 +19,8 @@ pub const TAG_GLYPH: u64 = 3;
 pub const TAG_RECORD: u64 = 4;
 pub const TAG_VARIANT: u64 = 5;
 pub const TAG_INFERRED: u64 = 6;
+pub const TAG_LIST: u64 = 7;
+pub const TAG_EMBEDDING: u64 = 8;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -27,22 +29,43 @@ pub struct Value {
     pub bits: u64,
 }
 
-/// Where an inferred value came from. Mirrors the interpreter's `Provenance`.
+/// Where an inferred value came from. Mirrors the interpreter's `Provenance`
+/// field-for-field so the compiled `render` is byte-identical across engines
+/// (Mock, llama, frontier) — provenance is observable output (`enact` binds it).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Provenance {
     pub oracle: String,
     pub model: String,
+    pub model_version_or_sha: String,
+    pub backend_id: String,
     pub seed: u64,
+    pub sampling: String,
 }
 
 impl Provenance {
+    /// The deterministic Mock provenance (the offline default / no-manifest path),
+    /// matching `witchcraft::value::Provenance::mock`.
+    pub fn mock(oracle: &str, model: &str, seed: u64) -> Self {
+        Provenance {
+            oracle: oracle.to_string(),
+            model: model.to_string(),
+            model_version_or_sha: "mock".to_string(),
+            backend_id: "mock".to_string(),
+            seed,
+            sampling: "deterministic".to_string(),
+        }
+    }
+
     pub fn render(&self) -> String {
-        // Mirrors the interpreter's `Provenance::render`. The compiled path is
-        // Mock-only in v0.2 (real engines attach in `complete-native-compile`),
-        // so version/backend/sampling are the Mock constants here.
+        // Identical to the interpreter's `Provenance::render`.
         format!(
-            "intent={} model={} version=mock backend=mock seed={} sampling=deterministic",
-            self.oracle, self.model, self.seed
+            "intent={} model={} version={} backend={} seed={} sampling={}",
+            self.oracle,
+            self.model,
+            self.model_version_or_sha,
+            self.backend_id,
+            self.seed,
+            self.sampling
         )
     }
 }
@@ -65,6 +88,15 @@ pub(crate) enum Payload {
         inner: Value,
         confidence: f64,
         provenance: Provenance,
+    },
+    /// A homogeneous, immutable list (e.g. `nearest`/`recent` results, list
+    /// literals). Owns one reference to each element.
+    List(Vec<Value>),
+    /// An embedding vector tagged with its space (the producing model id).
+    Embedding {
+        space: String,
+        vector: Vec<f64>,
+        provenance: Option<Provenance>,
     },
 }
 
@@ -133,6 +165,47 @@ pub fn inferred(inner: Value, confidence: f64, provenance: Provenance) -> Value 
             provenance,
         },
     )
+}
+
+/// Build a list taking ownership of one reference to each element.
+pub fn list(items: Vec<Value>) -> Value {
+    alloc(TAG_LIST, Payload::List(items))
+}
+
+/// Build an embedding tagged with its space.
+pub fn embedding(space: &str, vector: Vec<f64>, provenance: Option<Provenance>) -> Value {
+    alloc(
+        TAG_EMBEDDING,
+        Payload::Embedding {
+            space: space.to_string(),
+            vector,
+            provenance,
+        },
+    )
+}
+
+/// The elements of a list value (borrowed copies; retain to keep them).
+pub fn list_items(v: Value) -> Vec<Value> {
+    match &unsafe { obj(v) }.payload {
+        Payload::List(items) => items.clone(),
+        _ => panic!("list_items on non-list value"),
+    }
+}
+
+/// The number of elements in a list value.
+pub fn list_len(v: Value) -> usize {
+    match &unsafe { obj(v) }.payload {
+        Payload::List(items) => items.len(),
+        _ => panic!("list_len on non-list value"),
+    }
+}
+
+/// The (space, vector) of an embedding value.
+pub fn embedding_parts(v: Value) -> (String, Vec<f64>) {
+    match &unsafe { obj(v) }.payload {
+        Payload::Embedding { space, vector, .. } => (space.clone(), vector.clone()),
+        _ => panic!("embedding_parts on non-embedding value"),
+    }
 }
 
 // ---------- accessors ----------
@@ -212,7 +285,8 @@ pub fn provenance(v: Value) -> Option<Provenance> {
             provenance.clone()
         }
         Payload::Inferred { provenance, .. } => Some(provenance.clone()),
-        Payload::Glyph(_) => None,
+        Payload::Embedding { provenance, .. } => provenance.clone(),
+        Payload::Glyph(_) | Payload::List(_) => None,
     }
 }
 
@@ -361,6 +435,40 @@ pub fn equals(a: Value, b: Value) -> bool {
             };
             ca == cb && pa == pb && equals(ia, ib)
         }
+        TAG_LIST => {
+            let a_items = match &unsafe { obj(a) }.payload {
+                Payload::List(items) => items,
+                _ => unreachable!(),
+            };
+            let b_items = match &unsafe { obj(b) }.payload {
+                Payload::List(items) => items,
+                _ => unreachable!(),
+            };
+            a_items.len() == b_items.len()
+                && a_items
+                    .iter()
+                    .zip(b_items.iter())
+                    .all(|(x, y)| equals(*x, *y))
+        }
+        TAG_EMBEDDING => {
+            let (sa, va, pa) = match &unsafe { obj(a) }.payload {
+                Payload::Embedding {
+                    space,
+                    vector,
+                    provenance,
+                } => (space, vector, provenance),
+                _ => unreachable!(),
+            };
+            let (sb, vb, pb) = match &unsafe { obj(b) }.payload {
+                Payload::Embedding {
+                    space,
+                    vector,
+                    provenance,
+                } => (space, vector, provenance),
+                _ => unreachable!(),
+            };
+            sa == sb && va == vb && pa == pb
+        }
         _ => false,
     }
 }
@@ -434,6 +542,21 @@ pub fn display(v: Value) -> String {
                 display(inner),
                 fmt_num(confidence)
             )
+        }
+        TAG_LIST => {
+            let items = match &unsafe { obj(v) }.payload {
+                Payload::List(items) => items,
+                _ => unreachable!(),
+            };
+            let inner: Vec<String> = items.iter().map(|c| display(*c)).collect();
+            format!("[{}]", inner.join(", "))
+        }
+        TAG_EMBEDDING => {
+            let space = match &unsafe { obj(v) }.payload {
+                Payload::Embedding { space, .. } => space,
+                _ => unreachable!(),
+            };
+            format!("<embedding@{}>", space)
         }
         _ => panic!("display on unknown tag {}", v.tag),
     }

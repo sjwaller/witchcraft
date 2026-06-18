@@ -6,6 +6,16 @@ license.workspace = true
 repository.workspace = true
 description = "The Witchcraft Cranelift backend: lowering IR -> Cranelift IR -> native code, linked against witchcraft-runtime."
 
+[features]
+# The JIT-compiled path carries the engine bridge so a compiled program can
+# resolve real engines from a manifest (the compiled engine-swap). The shipped
+# `grimoire` staticlib is built separately (bare rustc, no features) and stays
+# Mock-only and self-contained.
+default = ["engines"]
+engines = ["witchcraft-runtime/engines"]
+llama = ["engines", "witchcraft-runtime/llama", "witchcraft/llama"]
+frontier = ["engines", "witchcraft-runtime/frontier", "witchcraft/frontier"]
+
 [dependencies]
 cranelift-codegen = "0.132.2"
 cranelift-frontend = "0.132.2"

@@ -66,16 +66,32 @@ struct Runtime {
     builder_push: FuncId,
     record_finish: FuncId,
     variant_finish: FuncId,
+    list_finish: FuncId,
+    embed: FuncId,
+    similarity: FuncId,
+    nearest: FuncId,
+    mem_register: FuncId,
+    mem_write: FuncId,
+    mem_recent: FuncId,
+    advance: FuncId,
+    audit_log: FuncId,
     parse_seed: FuncId,
     set_seed: FuncId,
 }
 
 /// Knobs for a compiled run, mirroring the interpreter's `RunConfig`.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 pub struct RunOptions {
     pub seed: u64,
     /// Fault-injection: force every discharge to see this confidence.
     pub force_confidence: Option<f64>,
+    /// A deployment manifest (TOML subset). When present, every inference need is
+    /// resolved against it at load (refuse-to-start), and compiled `divine`
+    /// routes through the bound engine — the *compiled engine-swap*. Requires the
+    /// `engines` feature (the JIT path); the shipped `grimoire` staticlib is
+    /// Mock-only. With no manifest the built-in deterministic Mock serves every
+    /// need (byte-identical to the interpreter's offline default).
+    pub manifest: Option<String>,
 }
 
 impl RunOptions {
@@ -83,7 +99,14 @@ impl RunOptions {
         RunOptions {
             seed,
             force_confidence: None,
+            manifest: None,
         }
+    }
+
+    /// Set the deployment manifest for this run.
+    pub fn with_manifest(mut self, manifest: impl Into<String>) -> Self {
+        self.manifest = Some(manifest.into());
+        self
     }
 }
 
@@ -95,7 +118,8 @@ pub fn run(prog: &ir::Program, seed: u64) -> Result<(), String> {
         .finalize_definitions()
         .map_err(|e| format!("finalize: {e}"))?;
     let code = module.get_finalized_function(main_id);
-    apply_options(RunOptions::seed(seed));
+    apply_options(&RunOptions::seed(seed));
+    bind_manifest(prog, &RunOptions::seed(seed))?;
     unsafe { call_main(code) };
     // Keep the module alive until execution has finished.
     drop(module);
@@ -115,7 +139,11 @@ pub fn run_capture_with(prog: &ir::Program, options: RunOptions) -> Result<Strin
         .finalize_definitions()
         .map_err(|e| format!("finalize: {e}"))?;
     let code = module.get_finalized_function(main_id);
-    apply_options(options);
+    apply_options(&options);
+    // Refuse to start if a need cannot be bound under its policy (mirrors the
+    // interpreter's load-time resolution). Must run after the seed is set so
+    // deterministic engines (the Mock) are seeded identically.
+    bind_manifest(prog, &options)?;
     witchcraft_runtime::begin_capture();
     unsafe { call_main(code) };
     let out = witchcraft_runtime::end_capture();
@@ -123,9 +151,41 @@ pub fn run_capture_with(prog: &ir::Program, options: RunOptions) -> Result<Strin
     Ok(out)
 }
 
-fn apply_options(options: RunOptions) {
+fn apply_options(options: &RunOptions) {
     witchcraft_runtime::set_seed(options.seed);
     witchcraft_runtime::set_force_confidence(options.force_confidence);
+}
+
+/// Install the run's manifest into the runtime engine bridge and resolve every
+/// inference need against it (refuse-to-start). With no manifest, any previously
+/// installed manifest is cleared so the built-in Mock decoder serves each need.
+#[cfg(feature = "engines")]
+fn bind_manifest(prog: &ir::Program, options: &RunOptions) -> Result<(), String> {
+    match &options.manifest {
+        Some(src) => {
+            witchcraft_runtime::engines::set_manifest(src)?;
+            let needs: Vec<(String, bool, bool)> = prog
+                .needs
+                .iter()
+                .map(|n| (n.intent.clone(), n.allow_network, n.allow_downgrade))
+                .collect();
+            witchcraft_runtime::engines::resolve_needs(&needs)
+        }
+        None => {
+            witchcraft_runtime::engines::clear();
+            Ok(())
+        }
+    }
+}
+
+#[cfg(not(feature = "engines"))]
+fn bind_manifest(_prog: &ir::Program, options: &RunOptions) -> Result<(), String> {
+    if options.manifest.is_some() {
+        return Err(
+            "a manifest was supplied but this build lacks the `engines` feature".to_string(),
+        );
+    }
+    Ok(())
 }
 
 /// # Safety
@@ -219,6 +279,15 @@ fn register_runtime_symbols(builder: &mut JITBuilder) {
     builder.symbol("w_builder_push", w_builder_push as *const u8);
     builder.symbol("w_record_finish", w_record_finish as *const u8);
     builder.symbol("w_variant_finish", w_variant_finish as *const u8);
+    builder.symbol("w_list_finish", w_list_finish as *const u8);
+    builder.symbol("w_embed", w_embed as *const u8);
+    builder.symbol("w_similarity", w_similarity as *const u8);
+    builder.symbol("w_nearest", w_nearest as *const u8);
+    builder.symbol("w_mem_register", w_mem_register as *const u8);
+    builder.symbol("w_mem_write", w_mem_write as *const u8);
+    builder.symbol("w_mem_recent", w_mem_recent as *const u8);
+    builder.symbol("w_advance", w_advance as *const u8);
+    builder.symbol("w_audit_log", w_audit_log as *const u8);
     builder.symbol("w_parse_seed", w_parse_seed as *const u8);
     builder.symbol("w_set_seed", w_set_seed as *const u8);
 }
@@ -404,24 +473,16 @@ fn declare_runtime<M: Module>(module: &mut M) -> Result<Runtime, String> {
     // value -> u32
     let variant_tag = import("w_variant_tag", value(), vec![AbiParam::new(I32)])?;
     let provenance_glyph = import("w_provenance_glyph", value(), value())?;
-    // (grammar ptr,len), (oracle ptr,len), (model ptr,len), conf_out ptr -> value
+    // (grammar ptr,len), (intent ptr,len), input value, conf_out ptr -> value
     let divine = import(
         "w_divine",
         vec![i64p(), i64p(), i64p(), i64p(), i64p(), i64p(), i64p()],
         value(),
     )?;
-    // inner value, confidence (f64), (oracle ptr,len), (model ptr,len) -> value
+    // inner value, confidence (f64) -> value (provenance from the last decode)
     let make_inferred = import(
         "w_make_inferred",
-        vec![
-            i64p(),
-            i64p(),
-            AbiParam::new(F64),
-            i64p(),
-            i64p(),
-            i64p(),
-            i64p(),
-        ],
+        vec![i64p(), i64p(), AbiParam::new(F64)],
         value(),
     )?;
     let builder_new = import("w_builder_new", vec![], vec![i64p()])?;
@@ -438,6 +499,52 @@ fn declare_runtime<M: Module>(module: &mut M) -> Result<Runtime, String> {
         vec![i64p(), i64p(), i64p(), AbiParam::new(I32)],
         value(),
     )?;
+    // builder -> value (list)
+    let list_finish = import("w_list_finish", vec![i64p()], value())?;
+    // (oracle ptr,len), (space ptr,len), input value -> value (embedding)
+    let embed = import(
+        "w_embed",
+        vec![i64p(), i64p(), i64p(), i64p(), i64p(), i64p()],
+        value(),
+    )?;
+    // a value, b value -> value (spark)
+    let similarity = import(
+        "w_similarity",
+        vec![i64p(), i64p(), i64p(), i64p()],
+        value(),
+    )?;
+    // query value, candidates value, k value -> value (list)
+    let nearest = import(
+        "w_nearest",
+        vec![i64p(), i64p(), i64p(), i64p(), i64p(), i64p()],
+        value(),
+    )?;
+    // (name ptr,len), (scope ptr,len), has_retention(i8), retention(f64), audit(i8)
+    let mem_register = import(
+        "w_mem_register",
+        vec![
+            i64p(),
+            i64p(),
+            i64p(),
+            i64p(),
+            AbiParam::new(I8),
+            AbiParam::new(F64),
+            AbiParam::new(I8),
+        ],
+        vec![],
+    )?;
+    // (name ptr,len), value
+    let mem_write = import("w_mem_write", vec![i64p(), i64p(), i64p(), i64p()], vec![])?;
+    // (name ptr,len), (method ptr,len), k value -> value (list)
+    let mem_recent = import(
+        "w_mem_recent",
+        vec![i64p(), i64p(), i64p(), i64p(), i64p(), i64p()],
+        value(),
+    )?;
+    // n value
+    let advance = import("w_advance", value(), vec![])?;
+    // () -> value (list)
+    let audit_log = import("w_audit_log", vec![], value())?;
     // (argc, argv) -> seed; used only by the compiled executable entry point.
     let parse_seed = import(
         "w_parse_seed",
@@ -464,6 +571,15 @@ fn declare_runtime<M: Module>(module: &mut M) -> Result<Runtime, String> {
         builder_push,
         record_finish,
         variant_finish,
+        list_finish,
+        embed,
+        similarity,
+        nearest,
+        mem_register,
+        mem_write,
+        mem_recent,
+        advance,
+        audit_log,
         parse_seed,
         set_seed,
     })
@@ -537,6 +653,15 @@ fn gen_function<M: Module>(
             builder_push: module.declare_func_in_func(rt.builder_push, b.func),
             record_finish: module.declare_func_in_func(rt.record_finish, b.func),
             variant_finish: module.declare_func_in_func(rt.variant_finish, b.func),
+            list_finish: module.declare_func_in_func(rt.list_finish, b.func),
+            embed: module.declare_func_in_func(rt.embed, b.func),
+            similarity: module.declare_func_in_func(rt.similarity, b.func),
+            nearest: module.declare_func_in_func(rt.nearest, b.func),
+            mem_register: module.declare_func_in_func(rt.mem_register, b.func),
+            mem_write: module.declare_func_in_func(rt.mem_write, b.func),
+            mem_recent: module.declare_func_in_func(rt.mem_recent, b.func),
+            advance: module.declare_func_in_func(rt.advance, b.func),
+            audit_log: module.declare_func_in_func(rt.audit_log, b.func),
         };
         let mut user_refs: HashMap<String, _> = HashMap::new();
         for (name, id) in fn_ids {
@@ -598,6 +723,15 @@ struct Refs {
     builder_push: cranelift_codegen::ir::FuncRef,
     record_finish: cranelift_codegen::ir::FuncRef,
     variant_finish: cranelift_codegen::ir::FuncRef,
+    list_finish: cranelift_codegen::ir::FuncRef,
+    embed: cranelift_codegen::ir::FuncRef,
+    similarity: cranelift_codegen::ir::FuncRef,
+    nearest: cranelift_codegen::ir::FuncRef,
+    mem_register: cranelift_codegen::ir::FuncRef,
+    mem_write: cranelift_codegen::ir::FuncRef,
+    mem_recent: cranelift_codegen::ir::FuncRef,
+    advance: cranelift_codegen::ir::FuncRef,
+    audit_log: cranelift_codegen::ir::FuncRef,
 }
 
 struct Gen<'a, 'b, M: Module> {
@@ -788,18 +922,15 @@ impl<M: Module> Gen<'_, '_, M> {
                 dst_val,
                 dst_conf,
                 grammar,
-                oracle,
-                model,
-                inputs,
+                intent,
+                input,
             } => {
-                // Inputs are evaluated for effect (the mock decoder is content-free).
-                for inp in inputs {
-                    self.release_operand(inp);
-                }
+                // The input glyph (the prompt) is the engine's `from (...)`; the
+                // runtime consumes it (the Mock ignores it; a real engine reads it).
+                let (itag, ibits) = self.operand(input);
                 let bytes = self.grammar_bytes[*grammar as usize].clone();
                 let (gptr, glen) = self.bytes_data(&bytes)?;
-                let (optr, olen) = self.str_data(oracle)?;
-                let (mptr, mlen) = self.str_data(model)?;
+                let (iptr, ilen) = self.str_data(intent)?;
                 // Stack slot to receive the confidence (an out-parameter).
                 let slot = self.b.create_sized_stack_slot(StackSlotData::new(
                     StackSlotKind::ExplicitSlot,
@@ -809,28 +940,20 @@ impl<M: Module> Gen<'_, '_, M> {
                 let conf_ptr = self.b.ins().stack_addr(I64, slot, 0);
                 let val = self.call_value(
                     self.refs.divine,
-                    &[gptr, glen, optr, olen, mptr, mlen, conf_ptr],
+                    &[gptr, glen, iptr, ilen, itag, ibits, conf_ptr],
                 );
                 let conf_f = self.b.ins().stack_load(F64, slot, 0);
                 let conf_val = self.spark_from_f64(conf_f);
                 self.tmps.insert(*dst_val, val);
                 self.tmps.insert(*dst_conf, conf_val);
             }
-            Instr::MakeInferred {
-                dst,
-                val,
-                conf,
-                oracle,
-                model,
-            } => {
+            Instr::MakeInferred { dst, val, conf } => {
                 let (vtag, vbits) = self.operand(val);
                 let conf_f = self.f64_of(conf);
-                let (optr, olen) = self.str_data(oracle)?;
-                let (mptr, mlen) = self.str_data(model)?;
-                let call = self.b.ins().call(
-                    self.refs.make_inferred,
-                    &[vtag, vbits, conf_f, optr, olen, mptr, mlen],
-                );
+                let call = self
+                    .b
+                    .ins()
+                    .call(self.refs.make_inferred, &[vtag, vbits, conf_f]);
                 let res = self.b.inst_results(call);
                 self.tmps.insert(*dst, (res[0], res[1]));
             }
@@ -847,8 +970,117 @@ impl<M: Module> Gen<'_, '_, M> {
                 let v = self.build_aggregate(fields, Some((name, *tag)))?;
                 self.tmps.insert(*dst, v);
             }
+            Instr::MakeList { dst, items } => {
+                let v = self.build_list(items);
+                self.tmps.insert(*dst, v);
+            }
+            Instr::Embed {
+                dst,
+                oracle,
+                space,
+                input,
+            } => {
+                let (itag, ibits) = self.operand(input);
+                let (optr, olen) = self.str_data(oracle)?;
+                let (sptr, slen) = self.str_data(space)?;
+                let v = self.call_value(self.refs.embed, &[optr, olen, sptr, slen, itag, ibits]);
+                self.release_operand(input);
+                self.tmps.insert(*dst, v);
+            }
+            Instr::Similarity { dst, lhs, rhs } => {
+                let (ltag, lbits) = self.operand(lhs);
+                let (rtag, rbits) = self.operand(rhs);
+                let v = self.call_value(self.refs.similarity, &[ltag, lbits, rtag, rbits]);
+                self.release_operand(lhs);
+                self.release_operand(rhs);
+                self.tmps.insert(*dst, v);
+            }
+            Instr::Nearest {
+                dst,
+                query,
+                candidates,
+                k,
+            } => {
+                let (qtag, qbits) = self.operand(query);
+                let (ctag, cbits) = self.operand(candidates);
+                let (ktag, kbits) = self.operand(k);
+                let v =
+                    self.call_value(self.refs.nearest, &[qtag, qbits, ctag, cbits, ktag, kbits]);
+                self.release_operand(query);
+                self.release_operand(candidates);
+                self.release_operand(k);
+                self.tmps.insert(*dst, v);
+            }
+            Instr::MemRegister {
+                name,
+                scope,
+                retention,
+                audit,
+            } => {
+                let (nptr, nlen) = self.str_data(name)?;
+                let (sptr, slen) = self.str_data(scope)?;
+                let (has_ret, ret) = match retention {
+                    Some(r) => (1i64, *r),
+                    None => (0i64, 0.0),
+                };
+                let has_ret = self.b.ins().iconst(I8, has_ret);
+                let ret = self.b.ins().f64const(ret);
+                let audit = self.b.ins().iconst(I8, *audit as i64);
+                self.b.ins().call(
+                    self.refs.mem_register,
+                    &[nptr, nlen, sptr, slen, has_ret, ret, audit],
+                );
+            }
+            Instr::MemWrite { name, value } => {
+                let (nptr, nlen) = self.str_data(name)?;
+                let (vtag, vbits) = self.operand(value);
+                // The value's reference transfers into the store; do not release.
+                self.b
+                    .ins()
+                    .call(self.refs.mem_write, &[nptr, nlen, vtag, vbits]);
+            }
+            Instr::MemRecent {
+                dst,
+                name,
+                method,
+                k,
+            } => {
+                let (nptr, nlen) = self.str_data(name)?;
+                let (mptr, mlen) = self.str_data(method)?;
+                let (ktag, kbits) = self.operand(k);
+                let v =
+                    self.call_value(self.refs.mem_recent, &[nptr, nlen, mptr, mlen, ktag, kbits]);
+                self.release_operand(k);
+                self.tmps.insert(*dst, v);
+            }
+            Instr::Advance { n } => {
+                let (ntag, nbits) = self.operand(n);
+                self.b.ins().call(self.refs.advance, &[ntag, nbits]);
+                self.release_operand(n);
+            }
+            Instr::AuditLog { dst } => {
+                let v = self.call_value(self.refs.audit_log, &[]);
+                self.tmps.insert(*dst, v);
+            }
         }
         Ok(())
+    }
+
+    /// Build a list value via the runtime builder (elements are positional;
+    /// names are dropped by `w_list_finish`). Each element transfers in.
+    fn build_list(&mut self, items: &[Operand]) -> (CValue, CValue) {
+        let call = self.b.ins().call(self.refs.builder_new, &[]);
+        let builder = self.b.inst_results(call)[0];
+        let (nptr, nlen) = self.str_data("").expect("empty field name");
+        for item in items {
+            let (vtag, vbits) = self.operand(item);
+            self.b
+                .ins()
+                .call(self.refs.builder_push, &[builder, nptr, nlen, vtag, vbits]);
+        }
+        let result = self.b.ins().call(self.refs.list_finish, &[builder]);
+        let res = self.b.inst_results(result);
+        (res[0], res[1])
     }
 
     /// Build a record (when `variant` is `None`) or variant via the runtime

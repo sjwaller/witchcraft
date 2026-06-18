@@ -15,7 +15,11 @@
 
 pub mod abi;
 pub mod decode;
+pub mod embed;
+#[cfg(feature = "engines")]
+pub mod engines;
 pub mod heap;
+pub mod memory;
 pub mod sink;
 pub mod value;
 
@@ -25,9 +29,9 @@ pub use sink::{
     begin_capture, end_capture, force_confidence, seed, set_force_confidence, set_seed,
 };
 pub use value::{
-    boolean, concat, display, equals, field, glyph, glyph_to_string, inferred, inferred_confidence,
-    inferred_inner, provenance, record, render, spark, unit, variant, variant_field, variant_tag,
-    Provenance, Value,
+    boolean, concat, display, embedding, embedding_parts, equals, field, glyph, glyph_to_string,
+    inferred, inferred_confidence, inferred_inner, list, list_items, list_len, provenance, record,
+    render, spark, unit, variant, variant_field, variant_tag, Provenance, Value,
 };
 
 #[cfg(test)]
@@ -103,11 +107,7 @@ mod tests {
     #[test]
     fn inferred_carries_inner_confidence_and_provenance() {
         let before = live_objects();
-        let prov = Provenance {
-            oracle: "triage".into(),
-            model: "mock".into(),
-            seed: 1,
-        };
+        let prov = Provenance::mock("triage", "mock", 1);
         let inf = inferred(spark(7.0), 0.9, prov.clone());
         assert_eq!(value::as_spark(inferred_inner(inf)), 7.0);
         assert_eq!(inferred_confidence(inf), 0.9);

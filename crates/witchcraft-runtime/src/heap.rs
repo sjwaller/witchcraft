@@ -111,6 +111,12 @@ pub fn release(v: Value) {
             }
         }
         Payload::Inferred { inner, .. } => release(*inner),
+        Payload::List(items) => {
+            for child in items {
+                release(*child);
+            }
+        }
+        Payload::Embedding { .. } => {}
     }
     LIVE.with(|c| c.set(c.get() - 1));
     drop(boxed);

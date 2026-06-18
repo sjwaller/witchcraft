@@ -4,7 +4,7 @@
 //! becomes a runtime `Decode` plus a confidence branch; `enact` becomes a tag
 //! `Switch`. Inference is never evaluated here.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
 use crate::error::Diagnostic;
@@ -12,6 +12,7 @@ use crate::grammar::{self, Grammar};
 use crate::ir::{
     Block, BlockId, Function, GrammarId, Instr, LocalId, Operand, Terminator, Tmp, VariantTagId,
 };
+use crate::span::Span;
 use crate::typeck::{build_type_table, resolve_type};
 use crate::types::Type;
 
@@ -30,14 +31,16 @@ pub fn lower_program_weaken(
     let mut ctx = LowerCtx {
         types,
         oracles: HashMap::new(),
+        memories: HashSet::new(),
         grammars: Vec::new(),
         variant_names: Vec::new(),
         functions: Vec::new(),
         weaken,
     };
 
-    // Oracles are resolved statically (declared, referenced by name in `divine`).
+    // Oracles and memories are resolved statically (declared, referenced by name).
     collect_oracles(prog, &mut ctx);
+    collect_memories(prog, &mut ctx);
 
     // User functions.
     for item in &prog.items {
@@ -69,11 +72,24 @@ pub fn lower_program_weaken(
         .collect();
     let main = ctx.lower_function("main", &[], &main_stmts)?;
 
+    // The inference needs + policies, for load-time manifest resolution on the
+    // compiled path (refuse-to-start), derived exactly as the interpreter does.
+    let mut needs: Vec<crate::ir::Need> = crate::interp::oracle_policies(prog)
+        .into_iter()
+        .map(|(intent, (policy, _span))| crate::ir::Need {
+            intent,
+            allow_network: policy.allow_network,
+            allow_downgrade: policy.allow_downgrade,
+        })
+        .collect();
+    needs.sort_by(|a, b| a.intent.cmp(&b.intent));
+
     Ok(crate::ir::Program {
         functions: ctx.functions,
         main,
         grammars: ctx.grammars,
         variant_names: ctx.variant_names,
+        needs,
     })
 }
 
@@ -115,9 +131,51 @@ fn collect_oracles(prog: &Program, ctx: &mut LowerCtx) {
     }
 }
 
+fn collect_memories(prog: &Program, ctx: &mut LowerCtx) {
+    fn walk(stmts: &[Stmt], ctx: &mut LowerCtx) {
+        for s in stmts {
+            match s {
+                Stmt::MemoryDecl(m) => {
+                    ctx.memories.insert(m.name.clone());
+                }
+                Stmt::While { body, .. } => walk(body, ctx),
+                Stmt::If {
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
+                    walk(then_branch, ctx);
+                    if let Some(eb) = else_branch {
+                        walk(eb, ctx);
+                    }
+                }
+                Stmt::Enact { arms, .. } => {
+                    for a in arms {
+                        walk(&a.body, ctx);
+                    }
+                }
+                Stmt::Grant { body, .. } | Stmt::Within { body, .. } => walk(body, ctx),
+                _ => {}
+            }
+        }
+    }
+    for item in &prog.items {
+        match item {
+            Item::Stmt(s) => walk(std::slice::from_ref(s), ctx),
+            Item::Fn(f) => walk(&f.body, ctx),
+            Item::Familiar(fam) => walk(&fam.body, ctx),
+            Item::Type(_) => {}
+        }
+    }
+}
+
 struct LowerCtx {
     types: HashMap<String, Type>,
     oracles: HashMap<String, String>,
+    /// Declared governed-memory names, so a `recv.method(..)` on one lowers to the
+    /// memory ABI rather than an ordinary value method (mirrors the interpreter,
+    /// which resolves memory names before evaluating the receiver).
+    memories: HashSet<String>,
     grammars: Vec<Grammar>,
     variant_names: Vec<String>,
     functions: Vec<Function>,
@@ -268,20 +326,23 @@ impl LowerCtx {
                 self.lower_block(fb, body)?;
                 fb.clear_last_value();
             }
-            // Governed memory is interpreter-only in v0.x.
+            // Governed memory registers a runtime store; scope is a compile-time
+            // capability (enforced by typeck before lowering), so it carries no
+            // runtime representation beyond the store's metadata.
             Stmt::MemoryDecl(m) => {
-                return Err(Diagnostic::runtime(
-                    "governed memory is not supported by the compiler yet (use `witch run`)"
-                        .to_string(),
-                    m.span,
-                ));
+                fb.emit(Instr::MemRegister {
+                    name: m.name.clone(),
+                    scope: m.scope.clone().unwrap_or_default(),
+                    retention: m.retention.as_ref().map(|(n, _)| *n),
+                    audit: m.audit_required,
+                });
+                fb.clear_last_value();
             }
-            Stmt::Within { span, .. } => {
-                return Err(Diagnostic::runtime(
-                    "`within` (memory scope) is not supported by the compiler yet (use `witch run`)"
-                        .to_string(),
-                    *span,
-                ));
+            // `within <scope>` grants `scope(<scope>)` at compile time (typeck);
+            // at run time it is an ordinary lexical block, like `grant`.
+            Stmt::Within { body, .. } => {
+                self.lower_block(fb, body)?;
+                fb.clear_last_value();
             }
             Stmt::Expr(e) => {
                 let op = self.lower_expr(fb, e)?;
@@ -296,16 +357,16 @@ impl LowerCtx {
             .map_err(|e| Diagnostic::type_error(e.message, d.span))?;
         let g = grammar::compile(&out_ty, self.weaken, d.span)?;
         let gid = self.add_grammar(g);
-        let model = self
+        let intent = self
             .oracles
             .get(&d.oracle)
             .cloned()
             .unwrap_or_else(|| "unknown".to_string());
 
-        let mut inputs = Vec::new();
-        for e in &d.inputs {
-            inputs.push(self.lower_expr(fb, e)?);
-        }
+        // Render and join the inputs into one prompt glyph (display of each,
+        // separated by newlines) — exactly what the interpreter threads to the
+        // engine. Inference itself stays a runtime call.
+        let input = self.lower_divine_input(fb, &d.inputs)?;
 
         let dst_val = fb.fresh_tmp();
         let dst_conf = fb.fresh_tmp();
@@ -313,11 +374,8 @@ impl LowerCtx {
             dst_val,
             dst_conf,
             grammar: gid,
-            // The provenance "intent" is the oracle's semantic intent (the
-            // summon string), not the local variable name (contract D1).
-            oracle: model.clone(),
-            model,
-            inputs,
+            intent,
+            input,
         });
 
         match d.threshold {
@@ -353,22 +411,12 @@ impl LowerCtx {
                 });
             }
             None => {
-                // undischarged: bind an inferred value
+                // undischarged: bind an inferred value (provenance from Decode)
                 let inf = fb.fresh_tmp();
                 fb.emit(Instr::MakeInferred {
                     dst: inf,
                     val: Operand::Tmp(dst_val),
                     conf: Operand::Tmp(dst_conf),
-                    oracle: self
-                        .oracles
-                        .get(&d.oracle)
-                        .cloned()
-                        .unwrap_or_else(|| "unknown".to_string()),
-                    model: self
-                        .oracles
-                        .get(&d.oracle)
-                        .cloned()
-                        .unwrap_or_else(|| "unknown".to_string()),
                 });
                 let l = fb.declare_local(&d.name);
                 fb.emit(Instr::StoreLocal {
@@ -378,6 +426,45 @@ impl LowerCtx {
             }
         }
         Ok(())
+    }
+
+    /// Render the `from (...)` inputs to a single prompt glyph: each input's
+    /// display, joined by newlines (matching the interpreter's `prompt`). An
+    /// empty input list yields the empty glyph.
+    fn lower_divine_input(
+        &mut self,
+        fb: &mut FnBuilder,
+        inputs: &[Expr],
+    ) -> Result<Operand, Diagnostic> {
+        if inputs.is_empty() {
+            let dst = fb.fresh_tmp();
+            fb.emit(Instr::Glyph {
+                dst,
+                text: String::new(),
+            });
+            return Ok(Operand::Tmp(dst));
+        }
+        let mut parts = Vec::new();
+        for (i, e) in inputs.iter().enumerate() {
+            if i > 0 {
+                let sep = fb.fresh_tmp();
+                fb.emit(Instr::Glyph {
+                    dst: sep,
+                    text: "\n".to_string(),
+                });
+                parts.push(Operand::Tmp(sep));
+            }
+            let v = self.lower_expr(fb, e)?;
+            let r = fb.fresh_tmp();
+            fb.emit(Instr::Render { dst: r, val: v });
+            parts.push(Operand::Tmp(r));
+        }
+        if parts.len() == 1 {
+            return Ok(parts.into_iter().next().unwrap());
+        }
+        let dst = fb.fresh_tmp();
+        fb.emit(Instr::Concat { dst, parts });
+        Ok(Operand::Tmp(dst))
     }
 
     fn lower_enact(
@@ -476,23 +563,15 @@ impl LowerCtx {
                 Ok(Operand::Tmp(dst))
             }
             Expr::Binary { op, lhs, rhs, .. } => self.lower_binary(fb, *op, lhs, rhs),
-            Expr::Call { callee, args, .. } => {
-                let mut argv = Vec::new();
-                for a in args {
-                    argv.push(self.lower_expr(fb, a)?);
-                }
-                let dst = fb.fresh_tmp();
-                fb.emit(Instr::Call {
-                    dst,
-                    callee: callee.clone(),
-                    args: argv,
-                });
-                Ok(Operand::Tmp(dst))
-            }
-            Expr::Method { span, method, .. } => Err(Diagnostic::runtime(
-                format!("method `{}` is not supported by the compiler yet", method),
-                *span,
-            )),
+            Expr::Call {
+                callee, args, span, ..
+            } => self.lower_call(fb, callee, args, *span),
+            Expr::Method {
+                recv,
+                method,
+                args,
+                span,
+            } => self.lower_method(fb, recv, method, args, *span),
             Expr::Field { recv, field, .. } => {
                 let r = self.lower_expr(fb, recv)?;
                 let dst = fb.fresh_tmp();
@@ -518,13 +597,143 @@ impl LowerCtx {
                 });
                 Ok(Operand::Tmp(dst))
             }
-            // Embeddings, lists, and governed memory are interpreter-only in v0.x;
-            // the Cranelift ship path covers the host language + divine/enact core.
-            Expr::List { span, .. } => Err(Diagnostic::runtime(
-                "list literals are not supported by the compiler yet (use `witch run`)".to_string(),
-                *span,
-            )),
+            Expr::List { items, .. } => {
+                let mut ops = Vec::with_capacity(items.len());
+                for it in items {
+                    ops.push(self.lower_expr(fb, it)?);
+                }
+                let dst = fb.fresh_tmp();
+                fb.emit(Instr::MakeList { dst, items: ops });
+                Ok(Operand::Tmp(dst))
+            }
         }
+    }
+
+    /// Lower a call expression. The embedding/memory builtins (`similarity`,
+    /// `nearest`, `advance`, `audit_log`) shadow user functions exactly as in the
+    /// interpreter (which checks builtins before user-defined functions).
+    fn lower_call(
+        &mut self,
+        fb: &mut FnBuilder,
+        callee: &str,
+        args: &[Expr],
+        _span: Span,
+    ) -> Result<Operand, Diagnostic> {
+        match callee {
+            "similarity" => {
+                let lhs = self.lower_expr(fb, &args[0])?;
+                let rhs = self.lower_expr(fb, &args[1])?;
+                let dst = fb.fresh_tmp();
+                fb.emit(Instr::Similarity { dst, lhs, rhs });
+                Ok(Operand::Tmp(dst))
+            }
+            "nearest" => {
+                let query = self.lower_expr(fb, &args[0])?;
+                let candidates = self.lower_expr(fb, &args[1])?;
+                let k = self.lower_expr(fb, &args[2])?;
+                let dst = fb.fresh_tmp();
+                fb.emit(Instr::Nearest {
+                    dst,
+                    query,
+                    candidates,
+                    k,
+                });
+                Ok(Operand::Tmp(dst))
+            }
+            "advance" => {
+                let n = match args.first() {
+                    Some(e) => self.lower_expr(fb, e)?,
+                    None => Operand::Spark(0.0),
+                };
+                fb.emit(Instr::Advance { n });
+                Ok(Operand::Unit)
+            }
+            "audit_log" => {
+                let dst = fb.fresh_tmp();
+                fb.emit(Instr::AuditLog { dst });
+                Ok(Operand::Tmp(dst))
+            }
+            _ => {
+                let mut argv = Vec::new();
+                for a in args {
+                    argv.push(self.lower_expr(fb, a)?);
+                }
+                let dst = fb.fresh_tmp();
+                fb.emit(Instr::Call {
+                    dst,
+                    callee: callee.to_string(),
+                    args: argv,
+                });
+                Ok(Operand::Tmp(dst))
+            }
+        }
+    }
+
+    /// Lower a method call: `oracle.embed(text)` and governed-memory operations
+    /// (`mem.write` / `mem.recent` / `mem.nearest`). Memory names resolve before
+    /// the receiver, matching the interpreter.
+    fn lower_method(
+        &mut self,
+        fb: &mut FnBuilder,
+        recv: &Expr,
+        method: &str,
+        args: &[Expr],
+        span: Span,
+    ) -> Result<Operand, Diagnostic> {
+        if let Expr::Ident(name, _) = recv {
+            // Governed memory operations.
+            if self.memories.contains(name) {
+                return match method {
+                    "write" => {
+                        let value = self.lower_expr(fb, &args[0])?;
+                        fb.emit(Instr::MemWrite {
+                            name: name.clone(),
+                            value,
+                        });
+                        Ok(Operand::Unit)
+                    }
+                    "recent" | "nearest" => {
+                        // The retrieval count is the last argument (matching the
+                        // interpreter's `memory_op`).
+                        let k = match args.last() {
+                            Some(e) => self.lower_expr(fb, e)?,
+                            None => Operand::Spark(0.0),
+                        };
+                        let dst = fb.fresh_tmp();
+                        fb.emit(Instr::MemRecent {
+                            dst,
+                            name: name.clone(),
+                            method: method.to_string(),
+                            k,
+                        });
+                        Ok(Operand::Tmp(dst))
+                    }
+                    other => Err(Diagnostic::runtime(
+                        format!("unknown memory operation `{}`", other),
+                        span,
+                    )),
+                };
+            }
+            // `oracle.embed(text)`: the embedding's space is the resolved model;
+            // its provenance names the oracle binding (matching the interpreter).
+            if method == "embed" {
+                if let Some(model) = self.oracles.get(name).cloned() {
+                    let input = self.lower_expr(fb, &args[0])?;
+                    let dst = fb.fresh_tmp();
+                    fb.emit(Instr::Embed {
+                        dst,
+                        oracle: name.clone(),
+                        space: model,
+                        input,
+                    });
+                    return Ok(Operand::Tmp(dst));
+                }
+            }
+        }
+        Err(Diagnostic::runtime(
+            format!("method `{}` is not supported by the compiler", method),
+            span,
+        ))
     }
 
     fn lower_glyph(&mut self, fb: &mut FnBuilder, segs: &[StrSeg]) -> Result<Operand, Diagnostic> {

@@ -118,6 +118,21 @@ is compiled into the artifact as a **generation grammar** (the litmus property
 holds in compiled form): the `divine` site stays a runtime, type-constrained call
 into the bundled decoder, so inference is never pre-computed at build time.
 
+The compiled `divine` routes through the **same `Engine` contract + manifest** the
+interpreter uses (§ *Inference is an effect*, below) — models are named only in the
+manifest, the artifact carries only the intent and the output grammar. The native
+binary resolves every need at load and **refuses to start** on an unsatisfiable
+policy, exactly like `witch run`. Selecting Mock / local llama / a frontier engine
+is purely a manifest change, with zero source change.
+
+> Honest boundary (§8): this engine-swap is carried on the **native code linked
+> with the full runtime** (the JIT path the equivalence tests exercise). The
+> *shipped, self-contained* `grimoire` executable is built against a
+> dependency-free runtime `staticlib` (bare `rustc`, no cargo features) and is
+> therefore **Mock-only** today; bundling real engines into the standalone
+> artifact is a packaging follow-up. Shape and policy are guaranteed on the
+> compiled path; correctness of any inferred value never is.
+
 Only the *host* language is compiled ahead of time; **inference is a runtime,
 type-constrained effect** — a green compile is still structural, not semantic
 (see below). `grimoire build` refuses ill-typed programs (no artifact, non-zero

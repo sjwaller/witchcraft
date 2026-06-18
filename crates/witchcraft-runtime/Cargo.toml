@@ -11,3 +11,18 @@ description = "The Witchcraft compiled runtime: value model, reference counting,
 # Cranelift backend (group 3) and `grimoire build` (group 5) can link the
 # runtime into a self-contained native executable.
 crate-type = ["rlib", "staticlib"]
+
+[features]
+default = []
+# Route compiled `divine`/`embed` through the same `Engine` contract + manifest
+# the interpreter uses (models named only in the manifest). Pulls in the
+# `witchcraft` library; OFF for the self-contained `grimoire` staticlib (which
+# `build.rs` compiles standalone with `rustc`), so a shipped artifact stays
+# dependency-free and Mock-only. The in-process / JIT path enables it.
+engines = ["dep:witchcraft"]
+# Real engines for the compiled engine-swap, forwarded to `witchcraft`.
+llama = ["engines", "witchcraft/llama"]
+frontier = ["engines", "witchcraft/frontier"]
+
+[dependencies]
+witchcraft = { path = "../witchcraft", optional = true }

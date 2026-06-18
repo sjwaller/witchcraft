@@ -8,10 +8,26 @@
 
 use std::cell::{Cell, RefCell};
 
+use crate::value::Provenance;
+
 thread_local! {
     static CAPTURE: RefCell<Option<String>> = const { RefCell::new(None) };
     static SEED: Cell<u64> = const { Cell::new(0) };
     static FORCE_CONFIDENCE: Cell<Option<f64>> = const { Cell::new(None) };
+    /// The provenance produced by the most recent `divine` decode, so an
+    /// undischarged `divine` can wrap its value as `Inferred` with the engine's
+    /// own provenance (the immediately-preceding decode), faithful across engines.
+    static LAST_PROVENANCE: RefCell<Option<Provenance>> = const { RefCell::new(None) };
+}
+
+/// Record the provenance of the latest decode.
+pub fn set_last_provenance(p: Provenance) {
+    LAST_PROVENANCE.with(|c| *c.borrow_mut() = Some(p));
+}
+
+/// The provenance of the latest decode (for wrapping an undischarged `divine`).
+pub fn last_provenance() -> Option<Provenance> {
+    LAST_PROVENANCE.with(|c| c.borrow().clone())
 }
 
 /// Start capturing `print` output into a buffer instead of stdout.
@@ -44,6 +60,7 @@ pub fn emit_line(s: &str) {
 pub fn set_seed(seed: u64) {
     SEED.with(|c| c.set(seed));
     crate::decode::reset(seed);
+    crate::memory::reset();
 }
 
 /// The current inference seed.

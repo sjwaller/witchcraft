@@ -109,6 +109,15 @@ provenance: intent=mock-triage-v1 model=mock-triage-v1 version=mock backend=mock
 }
 
 #[test]
+fn flagship_executable_matches_interpreter() {
+    // §6.2: the flagship — which composes all four primitives (typed embeddings,
+    // governed memory under `within`, a bounded familiar, capability discipline)
+    // plus divine/enact — now builds with `grimoire build` and reproduces
+    // `witch run` byte-for-byte. No separate compilable-only example is needed.
+    assert_compiled_equals_interpreted("triage_flagship.witch", &[0, 1, 7, 42]);
+}
+
+#[test]
 fn ill_typed_program_is_refused_with_no_artifact() {
     let src = unique_path("nonexhaustive.witch");
     std::fs::write(

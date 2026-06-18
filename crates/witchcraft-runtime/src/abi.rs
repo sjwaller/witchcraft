@@ -117,44 +117,86 @@ pub extern "C" fn w_provenance_glyph(v: Value) -> Value {
 pub unsafe extern "C" fn w_divine(
     grammar_ptr: *const u8,
     grammar_len: usize,
-    oracle_ptr: *const u8,
-    oracle_len: usize,
-    model_ptr: *const u8,
-    model_len: usize,
+    intent_ptr: *const u8,
+    intent_len: usize,
+    input: Value,
     conf_out: *mut f64,
 ) -> Value {
     let grammar = decode::decode_grammar(std::slice::from_raw_parts(grammar_ptr, grammar_len));
-    let (value, decoded_conf) = decode::decode(&grammar);
-    let confidence = crate::sink::force_confidence().unwrap_or(decoded_conf);
-    let prov = Provenance {
-        oracle: str_arg(oracle_ptr, oracle_len).to_string(),
-        model: str_arg(model_ptr, model_len).to_string(),
-        seed: crate::sink::seed(),
-    };
-    let value = value::set_top_provenance(value, prov);
+    let intent = str_arg(intent_ptr, intent_len);
+    let input_text = value::glyph_to_string(input);
+
+    // Route through the resolved engine (manifest binding) when one exists;
+    // otherwise the built-in deterministic Mock decoder serves the need — the
+    // offline default, byte-identical to the interpreter's Mock.
+    let (value, confidence, prov) = divine_via_engine(intent, &grammar, &input_text)
+        .unwrap_or_else(|| {
+            let (v, c) = decode::decode(&grammar);
+            let prov = Provenance::mock(intent, intent, crate::sink::seed());
+            let v = value::set_top_provenance(v, prov.clone());
+            (v, c, prov)
+        });
+
+    let confidence = crate::sink::force_confidence().unwrap_or(confidence);
+    crate::sink::set_last_provenance(prov);
+    release(input);
     *conf_out = confidence;
     value
 }
 
-/// Wrap a value + confidence as an inferred value (undischarged `divine`).
+#[cfg(feature = "engines")]
+fn divine_via_engine(
+    intent: &str,
+    grammar: &decode::Grammar,
+    input: &str,
+) -> Option<(Value, f64, crate::value::Provenance)> {
+    crate::engines::infer(intent, grammar, input)
+}
+
+#[cfg(not(feature = "engines"))]
+fn divine_via_engine(
+    _intent: &str,
+    _grammar: &decode::Grammar,
+    _input: &str,
+) -> Option<(Value, f64, crate::value::Provenance)> {
+    None
+}
+
+/// Wrap a value + confidence as an inferred value (undischarged `divine`),
+/// taking provenance from the immediately-preceding [`w_divine`] (the engine
+/// that produced the value), so it is faithful across engines.
+#[no_mangle]
+pub extern "C" fn w_make_inferred(inner: Value, confidence: f64) -> Value {
+    let prov = crate::sink::last_provenance()
+        .unwrap_or_else(|| Provenance::mock("", "", crate::sink::seed()));
+    value::inferred(inner, confidence, prov)
+}
+
+// ---------- manifest-driven engine resolution (compiled engine-swap) ----------
+
+/// Install a manifest from a TOML subset. Returns 0 on success, 1 on parse error
+/// (the message is written to `err_out` as a heap glyph value). Only meaningful
+/// when the runtime is built with the `engines` feature.
 ///
 /// # Safety
-/// The name pointers must describe valid UTF-8.
+/// `ptr`/`len` must describe valid UTF-8.
 #[no_mangle]
-pub unsafe extern "C" fn w_make_inferred(
-    inner: Value,
-    confidence: f64,
-    oracle_ptr: *const u8,
-    oracle_len: usize,
-    model_ptr: *const u8,
-    model_len: usize,
-) -> Value {
-    let prov = Provenance {
-        oracle: str_arg(oracle_ptr, oracle_len).to_string(),
-        model: str_arg(model_ptr, model_len).to_string(),
-        seed: crate::sink::seed(),
-    };
-    value::inferred(inner, confidence, prov)
+pub unsafe extern "C" fn w_set_manifest(ptr: *const u8, len: usize) -> Value {
+    let src = str_arg(ptr, len);
+    match set_manifest_impl(src) {
+        Ok(()) => value::glyph(""),
+        Err(msg) => value::glyph(&msg),
+    }
+}
+
+#[cfg(feature = "engines")]
+fn set_manifest_impl(src: &str) -> Result<(), String> {
+    crate::engines::set_manifest(src)
+}
+
+#[cfg(not(feature = "engines"))]
+fn set_manifest_impl(_src: &str) -> Result<(), String> {
+    Err("this build has no engine support (rebuild with the `engines` feature)".to_string())
 }
 
 // ---------- aggregate construction (records / variants) ----------
@@ -208,6 +250,144 @@ pub unsafe extern "C" fn w_variant_finish(
 ) -> Value {
     let b = Box::from_raw(b);
     value::variant(str_arg(name_ptr, name_len), tag, b.fields, None)
+}
+
+// ---------- lists ----------
+
+/// Finish a list, consuming the builder (field names are discarded; list
+/// elements are positional). Each pushed value's reference transfers in.
+///
+/// # Safety
+/// `b` must come from [`w_builder_new`] and not be used afterwards.
+#[no_mangle]
+pub unsafe extern "C" fn w_list_finish(b: *mut Builder) -> Value {
+    let b = Box::from_raw(b);
+    value::list(b.fields.into_iter().map(|(_, v)| v).collect())
+}
+
+// ---------- embeddings ----------
+
+/// Produce a deterministic embedding of `input` (a glyph) in the oracle's space.
+/// `space` is the resolved model id; `oracle` is the binding name (provenance).
+/// Mirrors the interpreter's `oracle.embed(text)`. Borrows `input`.
+///
+/// # Safety
+/// The name pointers must describe valid UTF-8; `input` must be a live glyph.
+#[no_mangle]
+pub unsafe extern "C" fn w_embed(
+    oracle_ptr: *const u8,
+    oracle_len: usize,
+    space_ptr: *const u8,
+    space_len: usize,
+    input: Value,
+) -> Value {
+    let text = value::glyph_to_string(input);
+    let space = str_arg(space_ptr, space_len);
+    let oracle = str_arg(oracle_ptr, oracle_len);
+    let vector = crate::embed::embed_vector(&text, space);
+    let prov = Provenance::mock(oracle, space, crate::sink::seed());
+    value::embedding(space, vector, Some(prov))
+}
+
+/// Cosine similarity of two embeddings as a spark. Borrows both.
+#[no_mangle]
+pub extern "C" fn w_similarity(a: Value, b: Value) -> Value {
+    let (_, va) = value::embedding_parts(a);
+    let (_, vb) = value::embedding_parts(b);
+    value::spark(crate::embed::cosine(&va, &vb))
+}
+
+/// The `k` nearest candidates to `query` (a list of embeddings), ranked by
+/// descending cosine with deterministic tie-breaking. Borrows its arguments;
+/// returns a fresh list owning retained references to the chosen candidates.
+#[no_mangle]
+pub extern "C" fn w_nearest(query: Value, candidates: Value, k: Value) -> Value {
+    let (_, qvec) = value::embedding_parts(query);
+    let items = value::list_items(candidates);
+    let cand_vecs: Vec<Vec<f64>> = items.iter().map(|c| value::embedding_parts(*c).1).collect();
+    let k = (value::as_spark(k).max(0.0)) as usize;
+    let chosen = crate::embed::rank_top_k(&qvec, &cand_vecs, k);
+    let out: Vec<Value> = chosen
+        .into_iter()
+        .map(|i| {
+            retain(items[i]);
+            items[i]
+        })
+        .collect();
+    value::list(out)
+}
+
+// ---------- governed memory ----------
+
+/// Register a memory store. `has_retention` selects whether `retention` (in
+/// logical ticks) applies; `audit` enables the audit log for this store.
+///
+/// # Safety
+/// The name/scope pointers must describe valid UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn w_mem_register(
+    name_ptr: *const u8,
+    name_len: usize,
+    scope_ptr: *const u8,
+    scope_len: usize,
+    has_retention: u8,
+    retention: f64,
+    audit: u8,
+) {
+    let retention = if has_retention != 0 {
+        Some(retention)
+    } else {
+        None
+    };
+    crate::memory::register(
+        str_arg(name_ptr, name_len),
+        str_arg(scope_ptr, scope_len),
+        retention,
+        audit != 0,
+    );
+}
+
+/// Write `value` into a memory store (ownership transfers in).
+///
+/// # Safety
+/// The name pointers must describe valid UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn w_mem_write(name_ptr: *const u8, name_len: usize, value: Value) {
+    crate::memory::write(str_arg(name_ptr, name_len), value);
+}
+
+/// Newest-first retrieval of up to `k` live entries as a list. `method` is the
+/// source op name (`recent`/`nearest`) for the audit log. Borrows `k`.
+///
+/// # Safety
+/// The name/method pointers must describe valid UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn w_mem_recent(
+    name_ptr: *const u8,
+    name_len: usize,
+    method_ptr: *const u8,
+    method_len: usize,
+    k: Value,
+) -> Value {
+    let k = value::as_spark(k).max(0.0) as usize;
+    crate::memory::query(
+        str_arg(name_ptr, name_len),
+        str_arg(method_ptr, method_len),
+        k,
+    )
+}
+
+/// Advance the logical clock by `n` (the `advance` builtin). Borrows `n`.
+#[no_mangle]
+pub extern "C" fn w_advance(n: Value) {
+    let n = value::as_spark(n).max(0.0) as u64;
+    crate::memory::advance(n);
+}
+
+/// The accumulated audit log as a list of glyphs (the `audit_log` builtin).
+#[no_mangle]
+pub extern "C" fn w_audit_log() -> Value {
+    crate::memory::audit_log()
 }
 
 /// # Safety

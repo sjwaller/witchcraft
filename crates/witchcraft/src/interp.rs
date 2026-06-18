@@ -929,7 +929,7 @@ use crate::span::Span;
 /// plus a representative span for diagnostics. Capabilities granted around a site
 /// (`with grant`, a `fn`'s `requires`, a `familiar`'s `permits`) are the
 /// source-visible constraints the resolver checks against the manifest.
-fn oracle_policies(prog: &Program) -> HashMap<String, (Policy, Span)> {
+pub(crate) fn oracle_policies(prog: &Program) -> HashMap<String, (Policy, Span)> {
     let mut var_to_intent: HashMap<String, String> = HashMap::new();
     for item in &prog.items {
         match item {

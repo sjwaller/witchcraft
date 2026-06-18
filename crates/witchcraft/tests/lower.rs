@@ -114,18 +114,17 @@ print d.urgency
     assert_eq!(p.grammars.len(), 1, "one divine site compiles one grammar");
 
     let main = func(&p, "main");
-    let decode = all_instrs(main)
+    let intent = all_instrs(main)
         .into_iter()
         .find_map(|i| match i {
-            Instr::Decode { oracle, model, .. } => Some((oracle.clone(), model.clone())),
+            Instr::Decode { intent, .. } => Some(intent.clone()),
             _ => None,
         })
         .expect("divine lowers to a runtime Decode (inference is never resolved at lower time)");
     assert_eq!(
-        decode.0, "m",
-        "provenance carries the oracle's semantic intent"
+        intent, "m",
+        "the decode carries the oracle's semantic intent (the manifest binds it to a model)"
     );
-    assert_eq!(decode.1, "m", "provenance carries the resolved model id");
 
     assert!(
         terminators(main)
