@@ -1,0 +1,13 @@
+[package]
+name = "witchcraft-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The Witchcraft compiled runtime: value model, reference counting, and the decoder/oracle seam linked into grimoire-built executables."
+
+[lib]
+# `rlib` for in-process use by the toolchain and tests; `staticlib` so the
+# Cranelift backend (group 3) and `grimoire build` (group 5) can link the
+# runtime into a self-contained native executable.
+crate-type = ["rlib", "staticlib"]

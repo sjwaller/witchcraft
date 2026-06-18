@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/witchcraft", "crates/witch"]
+members = ["crates/witchcraft", "crates/witchcraft-runtime", "crates/witch"]
 
 [workspace.package]
 version = "0.1.0"

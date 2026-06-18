@@ -8,10 +8,10 @@
 
 ## 2. Runtime value model + reference counting
 
-- [ ] 2.1 Define the compiled runtime value representation: unboxed scalars; reference-counted heap payloads (glyph, record/variant fields, inferred inner+provenance)
-- [ ] 2.2 Implement retain/release/alloc behind a narrow runtime interface (so a later region fast-path can slot in)
-- [ ] 2.3 Emit retain/release at value moves and scope exits during codegen; free children on drop
-- [ ] 2.4 Tests: loop-local values are reclaimed mid-run (no unbounded growth); no leaks on the examples (e.g. under a leak checker)
+- [x] 2.1 Define the compiled runtime value representation: unboxed scalars; reference-counted heap payloads (glyph, record/variant fields, inferred inner+provenance)
+- [x] 2.2 Implement retain/release/alloc behind a narrow runtime interface (so a later region fast-path can slot in)
+- [ ] 2.3 Emit retain/release at value moves and scope exits during codegen; free children on drop <!-- coupled to group 3: the emission site is the Cranelift backend -->
+- [~] 2.4 Tests: loop-local values are reclaimed mid-run (no unbounded growth); no leaks on the examples (e.g. under a leak checker) <!-- reclamation property unit-tested in the runtime now; "no leaks on examples" needs the codegen path (group 3) -->
 
 ## 3. Cranelift backend
 
