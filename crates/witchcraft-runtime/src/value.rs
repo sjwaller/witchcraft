@@ -213,6 +213,82 @@ pub fn provenance(v: Value) -> Option<Provenance> {
     }
 }
 
+// ---------- equality (must match the interpreter's `Value` PartialEq) ----------
+
+/// Structural equality, mirroring `witchcraft::value::Value`'s derived `PartialEq`
+/// so the compiled `==` agrees with the interpreter. Provenance participates in
+/// equality, exactly as in the interpreter.
+pub fn equals(a: Value, b: Value) -> bool {
+    if a.tag != b.tag {
+        return false;
+    }
+    match a.tag {
+        TAG_UNIT => true,
+        TAG_BOOL => as_bool(a) == as_bool(b),
+        TAG_SPARK => as_spark(a) == as_spark(b),
+        TAG_GLYPH => glyph_to_string(a) == glyph_to_string(b),
+        TAG_RECORD => {
+            let (fa, pa) = match &unsafe { obj(a) }.payload {
+                Payload::Record { fields, provenance } => (fields, provenance),
+                _ => unreachable!(),
+            };
+            let (fb, pb) = match &unsafe { obj(b) }.payload {
+                Payload::Record { fields, provenance } => (fields, provenance),
+                _ => unreachable!(),
+            };
+            pa == pb && fields_equal(fa, fb)
+        }
+        TAG_VARIANT => {
+            let (na, ta, fa, pa) = match &unsafe { obj(a) }.payload {
+                Payload::Variant {
+                    name,
+                    tag,
+                    fields,
+                    provenance,
+                } => (name, tag, fields, provenance),
+                _ => unreachable!(),
+            };
+            let (nb, tb, fb, pb) = match &unsafe { obj(b) }.payload {
+                Payload::Variant {
+                    name,
+                    tag,
+                    fields,
+                    provenance,
+                } => (name, tag, fields, provenance),
+                _ => unreachable!(),
+            };
+            na == nb && ta == tb && pa == pb && fields_equal(fa, fb)
+        }
+        TAG_INFERRED => {
+            let (ia, ca, pa) = match &unsafe { obj(a) }.payload {
+                Payload::Inferred {
+                    inner,
+                    confidence,
+                    provenance,
+                } => (*inner, *confidence, provenance),
+                _ => unreachable!(),
+            };
+            let (ib, cb, pb) = match &unsafe { obj(b) }.payload {
+                Payload::Inferred {
+                    inner,
+                    confidence,
+                    provenance,
+                } => (*inner, *confidence, provenance),
+                _ => unreachable!(),
+            };
+            ca == cb && pa == pb && equals(ia, ib)
+        }
+        _ => false,
+    }
+}
+
+fn fields_equal(a: &[(String, Value)], b: &[(String, Value)]) -> bool {
+    a.len() == b.len()
+        && a.iter()
+            .zip(b.iter())
+            .all(|((na, va), (nb, vb))| na == nb && equals(*va, *vb))
+}
+
 // ---------- glyph operations ----------
 
 /// Render any value to its glyph text (for interpolation and `print`).

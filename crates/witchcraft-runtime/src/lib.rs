@@ -15,11 +15,13 @@
 
 pub mod abi;
 pub mod heap;
+pub mod sink;
 pub mod value;
 
 pub use heap::{live_objects, release, retain};
+pub use sink::{begin_capture, end_capture, seed, set_seed};
 pub use value::{
-    boolean, concat, display, field, glyph, glyph_to_string, inferred, inferred_confidence,
+    boolean, concat, display, equals, field, glyph, glyph_to_string, inferred, inferred_confidence,
     inferred_inner, provenance, record, render, spark, unit, variant, variant_field, variant_tag,
     Provenance, Value,
 };

@@ -1,0 +1,16 @@
+[package]
+name = "witchcraft-codegen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The Witchcraft Cranelift backend: lowering IR -> Cranelift IR -> native code, linked against witchcraft-runtime."
+
+[dependencies]
+cranelift-codegen = "0.132.2"
+cranelift-frontend = "0.132.2"
+cranelift-jit = "0.132.2"
+cranelift-module = "0.132.2"
+cranelift-native = "0.132.2"
+witchcraft = { path = "../witchcraft" }
+witchcraft-runtime = { path = "../witchcraft-runtime" }

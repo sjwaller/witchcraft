@@ -56,10 +56,17 @@ pub extern "C" fn w_concat2(a: Value, b: Value) -> Value {
     value::concat(&[a, b])
 }
 
-/// Print a value followed by a newline (the compiled `print`).
+/// Print a value followed by a newline (the compiled `print`), through the
+/// runtime sink (stdout, or the capture buffer when active).
 #[no_mangle]
 pub extern "C" fn w_print(v: Value) {
-    println!("{}", value::display(v));
+    crate::sink::emit_line(&value::display(v));
+}
+
+/// Structural equality of two values (the compiled `==`).
+#[no_mangle]
+pub extern "C" fn w_equals(a: Value, b: Value) -> bool {
+    value::equals(a, b)
 }
 
 /// The interned variant tag of a value (for `enact` dispatch).

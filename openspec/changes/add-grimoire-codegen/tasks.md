@@ -10,15 +10,15 @@
 
 - [x] 2.1 Define the compiled runtime value representation: unboxed scalars; reference-counted heap payloads (glyph, record/variant fields, inferred inner+provenance)
 - [x] 2.2 Implement retain/release/alloc behind a narrow runtime interface (so a later region fast-path can slot in)
-- [ ] 2.3 Emit retain/release at value moves and scope exits during codegen; free children on drop <!-- coupled to group 3: the emission site is the Cranelift backend -->
-- [~] 2.4 Tests: loop-local values are reclaimed mid-run (no unbounded growth); no leaks on the examples (e.g. under a leak checker) <!-- reclamation property unit-tested in the runtime now; "no leaks on examples" needs the codegen path (group 3) -->
+- [x] 2.3 Emit retain/release at value moves and scope exits during codegen; free children on drop <!-- done for the host subset: LoadLocal retains, StoreLocal releases the old value, args transfer to the callee, locals released at scope exit, temporaries released after borrowing calls. Record/variant/inferred construction emission lands with group 4 -->
+- [~] 2.4 Tests: loop-local values are reclaimed mid-run (no unbounded growth); no leaks on the examples (e.g. under a leak checker) <!-- compiled loop reclamation verified (live count returns to baseline); the triage example leak check completes once group 4 compiles divine/enact -->
 
 ## 3. Cranelift backend
 
-- [ ] 3.1 Add the Cranelift dependency and a code generator from IR → Cranelift IR → object code
-- [ ] 3.2 Implement calling convention and value passing for the runtime value representation
-- [ ] 3.3 Codegen host control flow + functions; link the runtime (value model, env-free compiled scopes) into the object
-- [ ] 3.4 Emit the program entry point accepting program args and a `--seed` (argv/env per design open question)
+- [x] 3.1 Add the Cranelift dependency and a code generator from IR → Cranelift IR → object code <!-- backend is generic over cranelift_module::Module; JIT drives in-process execution now, object-module emission is wired in group 5 -->
+- [x] 3.2 Implement calling convention and value passing for the runtime value representation <!-- the 16-byte #[repr(C)] value travels as two i64s (tag,bits); runtime extern "C" functions called/returned per the platform ABI -->
+- [x] 3.3 Codegen host control flow + functions; link the runtime (value model, env-free compiled scopes) into the object <!-- scalars, glyphs+interpolation, arithmetic/comparison/equality, if/while, fn+calls, print; runtime linked via JIT symbols. Compiled output matches the interpreter on host.witch -->
+- [~] 3.4 Emit the program entry point accepting program args and a `--seed` (argv/env per design open question) <!-- seed is threaded into the runtime for runs; the executable CLI entry (argv/--seed parsing) lands with `grimoire build` in group 5 -->
 
 ## 4. divine / oracle / enact in compiled form
 
