@@ -12,7 +12,9 @@ pub mod env;
 pub mod error;
 pub mod grammar;
 pub mod interp;
+pub mod ir;
 pub mod lexer;
+pub mod lower;
 pub mod parser;
 pub mod span;
 pub mod token;
@@ -35,4 +37,12 @@ pub fn run_source(src: &str, config: RunConfig) -> Result<String, Vec<Diagnostic
     let program = parser::parse(src).map_err(|d| vec![d])?;
     typeck::check_program(&program)?;
     interp::run(&program, config).map_err(|d| vec![d])
+}
+
+/// Parse, type-check, then lower a program to the backend IR. The IR is the
+/// target the code generator consumes (see [`ir`] and [`lower`]).
+pub fn lower_source(src: &str) -> Result<ir::Program, Vec<Diagnostic>> {
+    let program = parser::parse(src).map_err(|d| vec![d])?;
+    typeck::check_program(&program)?;
+    lower::lower_program(&program).map_err(|d| vec![d])
 }

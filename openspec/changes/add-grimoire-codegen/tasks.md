@@ -1,10 +1,10 @@
 ## 1. Lowering IR
 
-- [ ] 1.1 Define the IR data types (functions, blocks, instructions, typed values) as the backend-facing target
-- [ ] 1.2 Lower the type-checked AST → IR for the host language (literals, `let`/`var`, arithmetic/comparison/boolean, `if`/`while`, `print`, `fn` + calls)
-- [ ] 1.3 Lower records/variants, field access, and glyph interpolation into IR value ops
-- [ ] 1.4 Lower `divine`/discharge/`fallback` and `enact` into IR (decode call + branch + tag dispatch); never resolve inference at lower time
-- [ ] 1.5 Unit tests: representative programs produce expected IR; ill-typed programs never reach lowering
+- [x] 1.1 Define the IR data types (functions, blocks, instructions, typed values) as the backend-facing target
+- [x] 1.2 Lower the type-checked AST → IR for the host language (literals, `let`/`var`, arithmetic/comparison/boolean, `if`/`while`, `print`, `fn` + calls)
+- [x] 1.3 Lower records/variants, field access, and glyph interpolation into IR value ops
+- [x] 1.4 Lower `divine`/discharge/`fallback` and `enact` into IR (decode call + branch + tag dispatch); never resolve inference at lower time
+- [x] 1.5 Unit tests: representative programs produce expected IR; ill-typed programs never reach lowering
 
 ## 2. Runtime value model + reference counting
 
