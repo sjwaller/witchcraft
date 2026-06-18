@@ -1,0 +1,20 @@
+# Deployment binding for the triage flagship — "cloud" profile.
+# Same flagship source as the laptop profile; only this manifest differs.
+#
+# In this offline repo the intent resolves to the deterministic Mock with a
+# different bound model id (so provenance differs from the laptop profile,
+# proving the binding swapped). To use a real frontier API, set the engine
+# `kind` to `anthropic`/`openai`, build with `--features frontier`, grant
+# `permit(network)` at the divine site, and export the credential env var.
+
+[need.mock-triage-v1]
+engine = "frontier-sim"
+model = "cloud-frontier-large"
+locality = "local"
+latency = "batch"
+
+[engine.frontier-sim]
+kind = "mock"
+# For a real frontier model instead (requires permit(network) in source):
+#   kind = "anthropic"
+#   api_key_env = "ANTHROPIC_API_KEY"

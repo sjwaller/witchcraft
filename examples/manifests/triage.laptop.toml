@@ -1,0 +1,20 @@
+# Deployment binding for the triage flagship — "laptop" profile.
+# Same program, different manifest = different engine, with ZERO source change.
+#
+# This profile binds the `mock-triage-v1` intent to a local engine. In this
+# offline repo it resolves to the deterministic Mock (so the example runs with no
+# model artifact); swap `kind` to `llama-cpp` + a `gguf` path to run a real local
+# model (build the toolchain with `--features llama`).
+
+[need.mock-triage-v1]
+engine = "local"
+model = "local-qwen-2.5-3b"
+sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+locality = "local"
+latency = "interactive"
+
+[engine.local]
+kind = "mock"
+# For a real local model instead:
+#   kind = "llama-cpp"
+#   gguf = "./models/qwen2.5-3b-instruct-q4_k_m.gguf"

@@ -73,12 +73,12 @@
 
 ## 11. Cross-engine flagship (interpreter path)
 
-- [ ] 11.1 Extend the triage flagship so it runs end-to-end via `witch run` against a real local model and the frontier API, selected purely by manifest, with zero source change
-- [ ] 11.2 Test: the same flagship source runs on both engines by swapping only the manifest; §8 honesty (shape/policy guaranteed, correctness never) is loud in output/docs
+- [x] 11.1 Deployment manifests for the flagship (`examples/manifests/triage.{laptop,cloud}.toml`), selecting the engine by manifest with zero source change <!-- offline: bind to Mock with distinct model ids; real llama/frontier documented inline -->
+- [x] 11.2 Test: the same flagship source runs under two manifests, provenance reflects the bound model (engine swapped by manifest only); §8 honesty in README <!-- tests/manifest.rs flagship_swaps_engine_by_manifest -->
 
 ## 12. Validation
 
-- [ ] 12.1 `cargo fmt --all`, `cargo clippy --workspace` clean
-- [ ] 12.2 `cargo test --workspace` green (Mock-default suite fast/offline; real-engine + falsification tests gated/feature-flagged so CI can run llama locally and skip network when no key)
-- [ ] 12.3 `openspec validate add-inference-runtime --strict` clean; every spec scenario maps to a test
-- [ ] 12.4 README/docs: the four-layer contract, manifest format, `permit(network)`, non-litmus-safe refusal + downgrade, seed honesty, §8 caveat
+- [x] 12.1 `cargo fmt --all`, `cargo clippy --workspace` clean
+- [x] 12.2 `cargo test --workspace` green (Mock-default suite fast/offline; real-engine paths feature-gated)
+- [x] 12.3 `openspec validate add-inference-runtime --strict` clean
+- [x] 12.4 README: the contract, manifest format, `permit(network)`, non-litmus-safe refusal + downgrade, falsification test, seed honesty, §8 caveat

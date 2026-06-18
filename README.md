@@ -139,13 +139,71 @@ cargo test
 cargo run -p witch -- run examples/triage.witch --seed 1
 ```
 
-## Determinism
+## Inference is a swappable engine, never a bound model
 
-Inference flows through a `Decoder` seam. v0.1 ships exactly one implementation:
-a deterministic, grammar-respecting `MockDecoder` that is seeded and performs no
-network access. The same `--seed` always produces the same output, which is what
-makes the litmus and fault-injection tests reproducible. Real model backends
-implement the same trait in a later version with no caller changes.
+A program is written against a **NEED + POLICY**, not a model. An `oracle` names a
+semantic **intent**, `divine` states the typed output (which becomes the
+generation grammar), and the source states **policy** (locality, litmus-strictness)
+— never a model, vendor, or engine. A deployment **manifest** binds each intent to
+a concrete engine. The same program, under a different manifest, runs on the
+laptop, the edge, or the cloud with **zero source change**:
+
+```
+# laptop.toml binds the intent to a local model
+[need.TriageReasoner]
+engine = "local"
+model  = "qwen2.5-3b-instruct"
+locality = "local"
+
+[engine.local]
+kind = "llama-cpp"            # or "mock" (the offline default), "anthropic", ...
+gguf = "./models/qwen.gguf"
+```
+
+```
+witch run triage.witch --manifest laptop.toml   # same source, local engine
+witch run triage.witch --manifest cloud.toml    # same source, frontier engine
+```
+
+The language trusts the **contract**, not the engine. Every legal engine must
+satisfy **grammar-by-construction**: the output type constrains generation
+token-by-token, so illegal outputs are *unreachable* — never validated and
+resampled. This is what lets an app outlive the models it runs on.
+
+- **Models are named only in the manifest.** A model name in source is a design
+  violation the contract forbids structurally.
+- **`permit(network)` is the locality policy.** Absent ⇒ on-device-only; a network
+  binding then **refuses to start** rather than silently crossing the boundary.
+- **Litmus-strict by default.** An engine that cannot demonstrate token-level
+  masking (e.g. a frontier provider enforcing JSON-schema server-side) is marked
+  **non-litmus-safe**; binding it to a strict need refuses to start unless the
+  source carries an explicit downgrade (`permit(unsafe_inference)`).
+- **Load-time resolution.** Every need is resolved when the program starts; an
+  unsatisfiable policy is a refusal with a diagnostic, never a silent fallback.
+
+The offline default is a deterministic, grammar-respecting **Mock** engine (no
+network), so first runs, examples, and CI are reproducible. Real engines ship
+behind cargo features: `--features llama` (llama.cpp via GBNF) and
+`--features frontier` (a JSON-schema API).
+
+### The falsification test (the canary)
+
+The thesis is real only if the type *participates in generation*. The falsification
+test builds a `divine` site twice — once with the real grammar, once with the type
+weakened — drives both through an engine, and asserts that at some decode step a
+token the weakened grammar permitted was **forbidden** by the real grammar
+(masking actually occurred). Comparing final outputs is explicitly *not* enough.
+If masking cannot be shown, the test fails loudly: the engine is a wrapper, not
+AI-first.
+
+### Determinism honesty (§8)
+
+With the **Mock** engine, the same `--seed` reproduces output exactly. With a real
+local or network engine, a seed is **best-effort only** — output is not guaranteed
+to reproduce across machines, quantisations, or providers. Provenance always
+records the intent, resolved model, `model_version_or_sha`, backend, seed, and
+sampling so a run is explainable even when it is not bit-reproducible. As always:
+**shape and policy are guaranteed; quality never is.**
 
 ## Capabilities (the compile-time effect discipline)
 

@@ -91,6 +91,40 @@ print d.urgency
     );
 }
 
+const FLAGSHIP: &str = include_str!("../../../examples/triage_flagship.witch");
+const LAPTOP_MANIFEST: &str = include_str!("../../../examples/manifests/triage.laptop.toml");
+const CLOUD_MANIFEST: &str = include_str!("../../../examples/manifests/triage.cloud.toml");
+
+#[test]
+fn flagship_swaps_engine_by_manifest_with_zero_source_change() {
+    // The SAME flagship source, run under two manifests, binds the intent to two
+    // different models — provenance reflects the bound model, proving the engine
+    // is selected purely by manifest (the AI-first + swappable-engine proof, at
+    // the interpreter level; real local/network engines are feature-gated).
+    let run_with = |manifest_src: &str| -> String {
+        let cfg = RunConfig {
+            seed: 1,
+            manifest: Some(Manifest::parse(manifest_src).expect("manifest parses")),
+            ..Default::default()
+        };
+        run_source(FLAGSHIP, cfg).expect("flagship runs under the manifest")
+    };
+
+    let laptop = run_with(LAPTOP_MANIFEST);
+    let cloud = run_with(CLOUD_MANIFEST);
+
+    assert!(
+        laptop.contains("model=local-qwen-2.5-3b"),
+        "laptop profile binds the local model: {laptop}"
+    );
+    assert!(
+        cloud.contains("model=cloud-frontier-large"),
+        "cloud profile binds the frontier model: {cloud}"
+    );
+    // Intent is identical across both; only the bound model differs.
+    assert!(laptop.contains("intent=mock-triage-v1") && cloud.contains("intent=mock-triage-v1"));
+}
+
 #[test]
 fn program_refuses_to_start_on_unsatisfiable_policy() {
     // The program names CloudReasoner but does not grant permit(network), so the
