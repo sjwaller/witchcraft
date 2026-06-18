@@ -62,6 +62,8 @@ pub enum TokenKind {
     RParen,
     LBrace,
     RBrace,
+    LBracket,
+    RBracket,
     Comma,
     Colon,
     Dot,

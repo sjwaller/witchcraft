@@ -224,6 +224,11 @@ pub enum Expr {
         fields: Vec<(String, Expr)>,
         span: Span,
     },
+    /// `[a, b, c]` — a homogeneous list literal (used by embedding/memory retrieval).
+    List {
+        items: Vec<Expr>,
+        span: Span,
+    },
 }
 
 impl Expr {
@@ -238,7 +243,8 @@ impl Expr {
             | Expr::Call { span: s, .. }
             | Expr::Method { span: s, .. }
             | Expr::Field { span: s, .. }
-            | Expr::Variant { span: s, .. } => *s,
+            | Expr::Variant { span: s, .. }
+            | Expr::List { span: s, .. } => *s,
         }
     }
 }

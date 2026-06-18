@@ -179,6 +179,25 @@ escalate()            // compile error: permit(escalate) is not granted
 Capability checking is **structural**: a passing check says an operation is
 *permitted* in its context, never that performing it is *wise* (§8).
 
+## Embeddings carry their space (no cross-space comparison)
+
+An `embedding` is typed by its **vector space** (`embedding@<model>`), produced by
+`oracle.embed(...)`. `similarity` and `nearest` are defined only *within* a space;
+comparing embeddings from different spaces is a **compile-time error** with a
+diagnostic naming both spaces — the §5.3 bug made unrepresentable. There is no
+implicit cross-space bridge. (Embeddings are interpreter-only in v0.1; the
+compiled ship path covers the host language plus `divine`/`enact`.)
+
+```
+oracle triage = summon "support-reasoner-v3"
+let a = triage.embed("payment failed")
+let b = triage.embed("card declined")
+print similarity(a, b)        # same space: fine
+```
+
+A passing check guarantees only that compared embeddings share a space — never
+that an embedding is meaningful or that a `nearest` result is *relevant* (§8).
+
 ## A green build is structural, not a correctness guarantee
 
 This cannot be overstated (paper §8): the compiler verifies **structural**

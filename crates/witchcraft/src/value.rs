@@ -36,6 +36,13 @@ pub enum Value {
         name: String,
         model: String,
     },
+    /// An embedding vector tagged with its space (the producing model id).
+    Embedding {
+        space: String,
+        vector: Vec<f64>,
+        provenance: Option<Provenance>,
+    },
+    List(Vec<Value>),
     Inferred {
         inner: Box<Value>,
         confidence: f64,
@@ -53,6 +60,8 @@ impl Value {
             Value::Record { .. } => "record",
             Value::Variant { .. } => "variant",
             Value::Oracle { .. } => "oracle",
+            Value::Embedding { .. } => "embedding",
+            Value::List(_) => "list",
             Value::Inferred { .. } => "inferred",
             Value::Unit => "essence",
         }
@@ -63,6 +72,7 @@ impl Value {
             Value::Record { provenance, .. } | Value::Variant { provenance, .. } => {
                 provenance.as_ref()
             }
+            Value::Embedding { provenance, .. } => provenance.as_ref(),
             Value::Inferred { provenance, .. } => Some(provenance),
             _ => None,
         }
@@ -92,6 +102,11 @@ impl Value {
                 }
             }
             Value::Oracle { model, .. } => format!("<oracle {}>", model),
+            Value::Embedding { space, .. } => format!("<embedding@{}>", space),
+            Value::List(items) => {
+                let inner: Vec<String> = items.iter().map(|v| v.display()).collect();
+                format!("[{}]", inner.join(", "))
+            }
             Value::Inferred {
                 inner, confidence, ..
             } => format!(

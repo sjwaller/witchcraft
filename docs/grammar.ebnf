@@ -60,9 +60,12 @@ unary          = ( "not" | "-" ) unary | postfix ;
 postfix        = primary { "." ident [ "(" [ expr { "," expr } ] ")" ] } ;
 primary        = number | "true" | "false" | glyph_literal
                | "(" expr ")"
-               | ident [ "(" [ expr { "," expr } ] ")" ]    (* call *)
+               | list
+               | ident [ "(" [ expr { "," expr } ] ")" ]    (* call / builtin (similarity, nearest) *)
                | Ident [ "(" [ field_init { "," field_init } ] ")" ] ; (* variant ctor *)
 field_init     = ident [ ":" expr ] ;
+list           = "[" [ expr { "," expr } ] "]" ;       (* homogeneous list literal *)
+(* postfix `.embed(...)` on an oracle yields a space-tagged embedding *)
 
 glyph_literal  = '"' { glyph_char | "${" expr "}" } '"' ;  (* ${...} interpolation *)
 number         = digit { digit } [ "." digit { digit } ] ;

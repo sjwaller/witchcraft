@@ -73,11 +73,14 @@ pub fn compile(ty: &Type, weaken: bool, span: Span) -> Result<Grammar, Diagnosti
             }
             Ok(Grammar::OneOf(gvars))
         }
-        Type::Inferred(_) | Type::Oracle | Type::Unit | Type::Unknown => {
-            Err(Diagnostic::type_error(
-                format!("type `{}` cannot be a `divine` output type", ty.display()),
-                span,
-            ))
-        }
+        Type::Inferred(_)
+        | Type::Oracle
+        | Type::Embedding(_)
+        | Type::List(_)
+        | Type::Unit
+        | Type::Unknown => Err(Diagnostic::type_error(
+            format!("type `{}` cannot be a `divine` output type", ty.display()),
+            span,
+        )),
     }
 }

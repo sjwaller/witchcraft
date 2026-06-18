@@ -377,13 +377,44 @@ impl Interp {
                 self.call_fn(callee, argv, *span)
             }
             Expr::Method {
-                recv, method, span, ..
+                recv,
+                method,
+                args,
+                span,
             } => {
-                let _ = self.eval(recv)?;
-                Err(Diagnostic::runtime(
-                    format!("unknown method `{}`", method),
-                    *span,
-                ))
+                let r = self.eval(recv)?;
+                match (method.as_str(), &r) {
+                    ("embed", Value::Oracle { name, model }) => {
+                        if args.len() != 1 {
+                            return Err(Diagnostic::runtime(
+                                "`embed` takes exactly one glyph argument".to_string(),
+                                *span,
+                            ));
+                        }
+                        let text = match self.eval(&args[0])? {
+                            Value::Glyph(s) => s,
+                            other => {
+                                return Err(Diagnostic::runtime(
+                                    format!("`embed` expects a glyph, found {}", other.type_name()),
+                                    *span,
+                                ))
+                            }
+                        };
+                        Ok(Value::Embedding {
+                            space: model.clone(),
+                            vector: embed_vector(&text, model),
+                            provenance: Some(Provenance {
+                                oracle: name.clone(),
+                                model: model.clone(),
+                                seed: self.config.seed,
+                            }),
+                        })
+                    }
+                    _ => Err(Diagnostic::runtime(
+                        format!("unknown method `{}` on {}", method, r.type_name()),
+                        *span,
+                    )),
+                }
             }
             Expr::Field { recv, field, span } => {
                 let r = self.eval(recv)?;
@@ -412,6 +443,13 @@ impl Interp {
                     fields: fv,
                     provenance: None,
                 })
+            }
+            Expr::List { items, .. } => {
+                let mut vs = Vec::with_capacity(items.len());
+                for it in items {
+                    vs.push(self.eval(it)?);
+                }
+                Ok(Value::List(vs))
             }
         }
     }
@@ -482,6 +520,9 @@ impl Interp {
         args: Vec<Value>,
         span: crate::span::Span,
     ) -> Result<Value, Diagnostic> {
+        if let Some(v) = self.call_builtin(name, &args, span)? {
+            return Ok(v);
+        }
         let f = match self.fns.get(name) {
             Some(f) => f.clone(),
             None => {
@@ -514,6 +555,140 @@ impl Interp {
             Exec::Return(v) => Ok(v),
             Exec::Value(v) => Ok(v),
         }
+    }
+
+    /// Built-in operations that are not user functions. Returns `Ok(None)` if the
+    /// name is not a builtin, so the normal function path runs.
+    fn call_builtin(
+        &mut self,
+        name: &str,
+        args: &[Value],
+        span: crate::span::Span,
+    ) -> Result<Option<Value>, Diagnostic> {
+        match name {
+            "similarity" => {
+                if args.len() != 2 {
+                    return Err(Diagnostic::runtime(
+                        "`similarity` takes two embeddings".to_string(),
+                        span,
+                    ));
+                }
+                let (sa, va) = as_embedding(&args[0], span)?;
+                let (sb, vb) = as_embedding(&args[1], span)?;
+                if sa != sb {
+                    return Err(Diagnostic::runtime(
+                        format!("cannot compare embeddings of spaces `{}` and `{}`", sa, sb),
+                        span,
+                    ));
+                }
+                Ok(Some(Value::Spark(cosine(va, vb))))
+            }
+            "nearest" => {
+                if args.len() != 3 {
+                    return Err(Diagnostic::runtime(
+                        "`nearest` takes (query, candidates, k)".to_string(),
+                        span,
+                    ));
+                }
+                let (qspace, qvec) = as_embedding(&args[0], span)?;
+                let candidates = match &args[1] {
+                    Value::List(items) => items,
+                    other => {
+                        return Err(Diagnostic::runtime(
+                            format!(
+                                "`nearest` expects a list of candidates, found {}",
+                                other.type_name()
+                            ),
+                            span,
+                        ))
+                    }
+                };
+                let k = as_spark(&args[2], span)?.max(0.0) as usize;
+                let mut scored: Vec<(usize, f64)> = Vec::with_capacity(candidates.len());
+                for (i, c) in candidates.iter().enumerate() {
+                    let (cspace, cvec) = as_embedding(c, span)?;
+                    if cspace != qspace {
+                        return Err(Diagnostic::runtime(
+                            format!(
+                                "cannot compare embeddings of spaces `{}` and `{}`",
+                                qspace, cspace
+                            ),
+                            span,
+                        ));
+                    }
+                    scored.push((i, cosine(qvec, cvec)));
+                }
+                // Descending by score; ties broken by original index for determinism.
+                scored.sort_by(|a, b| {
+                    b.1.partial_cmp(&a.1)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then(a.0.cmp(&b.0))
+                });
+                let chosen = scored
+                    .into_iter()
+                    .take(k)
+                    .map(|(i, _)| candidates[i].clone())
+                    .collect();
+                Ok(Some(Value::List(chosen)))
+            }
+            _ => Ok(None),
+        }
+    }
+}
+
+/// A deterministic, offline embedding: a fixed-dimension vector derived from the
+/// text and its space. This is a stand-in for a real model (like the mock
+/// decoder) — same text + space always yields the same vector, so similarity and
+/// `nearest` are reproducible.
+pub(crate) fn embed_vector(text: &str, space: &str) -> Vec<f64> {
+    const DIMS: usize = 16;
+    let mut v = vec![0.0f64; DIMS];
+    // Hash each (token, space) into a dimension and accumulate, so semantically
+    // different texts diverge but the same text is stable.
+    for token in text.split_whitespace() {
+        for (d, slot) in v.iter_mut().enumerate() {
+            let h = fnv1a(&format!("{space}\u{0}{token}\u{0}{d}"));
+            // map to [-1, 1]
+            *slot += ((h % 2000) as f64) / 1000.0 - 1.0;
+        }
+    }
+    if text.split_whitespace().next().is_none() {
+        // Empty text still gets a stable, space-dependent vector.
+        for (d, slot) in v.iter_mut().enumerate() {
+            let h = fnv1a(&format!("{space}\u{0}<empty>\u{0}{d}"));
+            *slot = ((h % 2000) as f64) / 1000.0 - 1.0;
+        }
+    }
+    v
+}
+
+fn fnv1a(s: &str) -> u64 {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for b in s.as_bytes() {
+        hash ^= *b as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+fn cosine(a: &[f64], b: &[f64]) -> f64 {
+    let dot: f64 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+    let na: f64 = a.iter().map(|x| x * x).sum::<f64>().sqrt();
+    let nb: f64 = b.iter().map(|x| x * x).sum::<f64>().sqrt();
+    if na == 0.0 || nb == 0.0 {
+        0.0
+    } else {
+        dot / (na * nb)
+    }
+}
+
+fn as_embedding(v: &Value, span: crate::span::Span) -> Result<(&str, &[f64]), Diagnostic> {
+    match v {
+        Value::Embedding { space, vector, .. } => Ok((space, vector)),
+        other => Err(Diagnostic::runtime(
+            format!("expected an embedding, found {}", other.type_name()),
+            span,
+        )),
     }
 }
 

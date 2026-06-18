@@ -693,6 +693,18 @@ impl Parser {
                 self.expect(TokenKind::RParen, "`)`")?;
                 Ok(e)
             }
+            TokenKind::LBracket => {
+                self.bump();
+                let mut items = Vec::new();
+                while !self.check(&TokenKind::RBracket) {
+                    items.push(self.expr()?);
+                    if !self.eat(&TokenKind::Comma) {
+                        break;
+                    }
+                }
+                self.expect(TokenKind::RBracket, "`]` to close the list")?;
+                Ok(Expr::List { items, span })
+            }
             TokenKind::Ident(name) => {
                 self.bump();
                 let is_variant = name.chars().next().is_some_and(|c| c.is_uppercase());

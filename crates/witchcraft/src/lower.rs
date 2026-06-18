@@ -485,6 +485,12 @@ impl LowerCtx {
                 });
                 Ok(Operand::Tmp(dst))
             }
+            // Embeddings, lists, and governed memory are interpreter-only in v0.x;
+            // the Cranelift ship path covers the host language + divine/enact core.
+            Expr::List { span, .. } => Err(Diagnostic::runtime(
+                "list literals are not supported by the compiler yet (use `witch run`)".to_string(),
+                *span,
+            )),
         }
     }
 

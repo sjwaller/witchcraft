@@ -220,6 +220,8 @@ impl<'a> Lexer<'a> {
             ')' => TokenKind::RParen,
             '{' => TokenKind::LBrace,
             '}' => TokenKind::RBrace,
+            '[' => TokenKind::LBracket,
+            ']' => TokenKind::RBracket,
             ',' => TokenKind::Comma,
             ':' => TokenKind::Colon,
             '+' => TokenKind::Plus,

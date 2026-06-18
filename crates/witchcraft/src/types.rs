@@ -20,6 +20,12 @@ pub enum Type {
     Oracle,
     Record(Vec<(String, Type)>),
     Sum(Vec<Variant>),
+    /// An embedding carrying its vector space (`embedding@space`). Two embeddings
+    /// are interchangeable only when their spaces match — this is the structural
+    /// rejection of cross-space comparison (§5.3).
+    Embedding(String),
+    /// A homogeneous list `[T]`.
+    List(Box<Type>),
     /// The result of inference: carries an underlying type, plus (at runtime)
     /// confidence and provenance. Not assignable to the underlying type.
     Inferred(Box<Type>),
@@ -57,6 +63,8 @@ impl Type {
                 let names: Vec<String> = variants.iter().map(|v| v.name.clone()).collect();
                 format!("one_of {{ {} }}", names.join(", "))
             }
+            Type::Embedding(space) => format!("embedding@{}", space),
+            Type::List(elem) => format!("[{}]", elem.display()),
             Type::Inferred(inner) => format!("Inferred<{}>", inner.display()),
             Type::Unit => "essence".to_string(),
             Type::Unknown => "essence".to_string(),
@@ -95,6 +103,9 @@ impl Type {
                 })
             }
             (Inferred(a), Inferred(b)) => a.assignable_to(b),
+            // Embeddings are interchangeable only within the same space.
+            (Embedding(a), Embedding(b)) => a == b,
+            (List(a), List(b)) => a.assignable_to(b),
             // The headline: Inferred<T> is NOT assignable to plain T.
             _ => false,
         }

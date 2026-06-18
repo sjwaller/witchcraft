@@ -92,6 +92,8 @@ struct Checker {
     /// Capabilities granted in the context currently being checked. A `fn` body
     /// starts with its declared `requires`; a `with grant` region appends to it.
     active_caps: Vec<Capability>,
+    /// Oracle name → model id, so `oracle.embed(...)` resolves its space.
+    oracles: HashMap<String, String>,
     diags: Vec<Diagnostic>,
 }
 
@@ -102,6 +104,7 @@ impl Checker {
             scopes: vec![Vec::new()],
             fn_requires: HashMap::new(),
             active_caps: Vec::new(),
+            oracles: HashMap::new(),
             diags: Vec::new(),
         }
     }
@@ -123,6 +126,14 @@ impl Checker {
         for item in &prog.items {
             if let Item::Fn(f) = item {
                 self.fn_requires.insert(f.name.clone(), f.requires.clone());
+            }
+        }
+        // Pass 1c: record oracle model ids so `oracle.embed` resolves its space.
+        for item in &prog.items {
+            match item {
+                Item::Stmt(s) => self.collect_oracles(std::slice::from_ref(s)),
+                Item::Fn(f) => self.collect_oracles(&f.body),
+                Item::Type(_) => {}
             }
         }
         // Pass 2: check fns and top-level statements.
@@ -168,6 +179,35 @@ impl Checker {
         self.check_block(&f.body);
         self.active_caps = saved;
         self.pop();
+    }
+
+    /// Recursively record oracle name → model id from `summon` statements.
+    fn collect_oracles(&mut self, stmts: &[Stmt]) {
+        for s in stmts {
+            match s {
+                Stmt::Summon { name, model, .. } => {
+                    self.oracles.insert(name.clone(), model.clone());
+                }
+                Stmt::While { body, .. } => self.collect_oracles(body),
+                Stmt::If {
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
+                    self.collect_oracles(then_branch);
+                    if let Some(eb) = else_branch {
+                        self.collect_oracles(eb);
+                    }
+                }
+                Stmt::Grant { body, .. } => self.collect_oracles(body),
+                Stmt::Enact { arms, .. } => {
+                    for a in arms {
+                        self.collect_oracles(&a.body);
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
     /// Is a capability currently granted in the active context?
@@ -463,16 +503,32 @@ impl Checker {
             Expr::Call {
                 callee, args, span, ..
             } => {
-                for a in args {
-                    let _ = self.infer(a);
+                let arg_types: Vec<Type> = args.iter().map(|a| self.infer(a)).collect();
+                if let Some(t) = self.infer_builtin(callee, &arg_types, *span) {
+                    return t;
                 }
                 self.check_call_caps(callee, *span);
                 Type::Unknown
             }
-            Expr::Method { recv, args, .. } => {
-                let _ = self.infer(recv);
+            Expr::Method {
+                recv, method, args, ..
+            } => {
+                let recv_ty = self.infer(recv);
                 for a in args {
                     let _ = self.infer(a);
+                }
+                if method == "embed" {
+                    if let Type::Oracle = recv_ty {
+                        let space = match recv.as_ref() {
+                            Expr::Ident(name, _) => self.oracles.get(name).cloned(),
+                            _ => None,
+                        };
+                        return match space {
+                            Some(s) => Type::Embedding(s),
+                            // Oracle whose model we cannot statically resolve.
+                            None => Type::Embedding("<oracle>".to_string()),
+                        };
+                    }
                 }
                 Type::Unknown
             }
@@ -495,6 +551,73 @@ impl Checker {
                 }
             }
             Expr::Variant { .. } => Type::Unknown,
+            Expr::List { items, .. } => {
+                let mut elem = Type::Unknown;
+                for it in items {
+                    let t = self.infer(it);
+                    if elem == Type::Unknown {
+                        elem = t;
+                    }
+                }
+                Type::List(Box::new(elem))
+            }
+        }
+    }
+
+    /// Type built-in operations (`similarity`, `nearest`). Returns `None` for a
+    /// non-builtin name so normal call checking proceeds. The space-typed
+    /// embedding rules live here: cross-space comparison is a compile error.
+    fn infer_builtin(
+        &mut self,
+        callee: &str,
+        args: &[Type],
+        span: crate::span::Span,
+    ) -> Option<Type> {
+        match callee {
+            "similarity" => {
+                if let [a, b] = args {
+                    self.require_same_space(a, b, span);
+                }
+                Some(Type::spark())
+            }
+            "nearest" => {
+                // nearest(query: embedding@S, candidates: [embedding@S], k) -> [embedding@S]
+                if let [query, candidates, _k] = args {
+                    let cand_elem = match candidates {
+                        Type::List(e) => (**e).clone(),
+                        _ => Type::Unknown,
+                    };
+                    self.require_same_space(query, &cand_elem, span);
+                    let space = match query {
+                        Type::Embedding(s) => Some(s.clone()),
+                        _ => match &cand_elem {
+                            Type::Embedding(s) => Some(s.clone()),
+                            _ => None,
+                        },
+                    };
+                    return Some(Type::List(Box::new(match space {
+                        Some(s) => Type::Embedding(s),
+                        None => Type::Unknown,
+                    })));
+                }
+                Some(Type::List(Box::new(Type::Unknown)))
+            }
+            _ => None,
+        }
+    }
+
+    /// Emit a cross-space error if both types are embeddings of differing spaces.
+    fn require_same_space(&mut self, a: &Type, b: &Type, span: crate::span::Span) {
+        if let (Type::Embedding(sa), Type::Embedding(sb)) = (a, b) {
+            if sa != sb {
+                self.diags.push(Diagnostic::type_error(
+                    format!(
+                        "cannot compare embeddings of different spaces `{}` and `{}` (no implicit cross-space bridge)",
+                        sa, sb
+                    ),
+                    span,
+                ));
+            }
         }
     }
 }
