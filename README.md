@@ -245,6 +245,26 @@ compile error. Inside a familiar, `divine ... using <oracle>` requires the
 guarantees permit adherence and bounded structure — never that the agent's plan
 is sound, well-behaved, or terminates in practice (§8/§10).
 
+## The flagship: four guarantees composed
+
+`examples/triage_flagship.witch` is the §6.3 worked example — a tenant-scoped
+`memory`, an `oracle`, a typed `Disposition`, and a single-pass `familiar` that
+embeds the message, retrieves scoped history, `divine`s a decision, and `enact`s
+its action. It composes all four structural guarantees and bootstrap's
+discharge/exhaustiveness, with no new language feature:
+
+```
+witch run examples/triage_flagship.witch
+```
+
+Each of the paper's four "will not compile" contrasts is a negative test in
+`crates/witchcraft/tests/flagship.rs`: an undischarged `divine`, an unscoped
+memory read, a cross-space embedding comparison, and an out-of-permit familiar
+action all fail `witch check`. The litmus also holds — deleting/weakening the
+`Disposition` type changes generation under a fixed seed. A green flagship proves
+the guarantees *compose*; it is never a claim that the triage decision is correct
+or well-judged (§8).
+
 ## A green build is structural, not a correctness guarantee
 
 This cannot be overstated (paper §8): the compiler verifies **structural**

@@ -60,6 +60,21 @@ fn check_fails_on_ungranted_capability() {
 }
 
 #[test]
+fn run_flagship_example_end_to_end() {
+    // The composed §6.3 program type-checks and runs to completion, enacting an
+    // action that carries provenance.
+    let out = witch()
+        .arg("run")
+        .arg(examples_dir().join("triage_flagship.witch"))
+        .output()
+        .expect("run witch");
+    assert!(out.status.success(), "flagship should run cleanly");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("recalled scoped history"));
+    assert!(stdout.contains("provenance: oracle=triage"));
+}
+
+#[test]
 fn same_seed_is_reproducible() {
     let run = |seed: &str| {
         let out = witch()

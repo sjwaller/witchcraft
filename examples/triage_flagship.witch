@@ -1,0 +1,69 @@
+# The §6.3 flagship: the four structural guarantees composed in one program.
+#  - capability/effect discipline: the `escalate` permit + memory `scope`
+#  - typed embeddings:           triage.embed(msg) carries its space
+#  - governed memory:            tenant-scoped `tickets`, accessed under `within`
+#  - bounded familiar:           single-pass `support_triage`, permits-bounded
+# Plus bootstrap's divine (confidence discharge) and enact (exhaustive dispatch).
+#
+# A green build proves these guarantees *compose* — never that the triage
+# decision is correct or well-judged (§8).
+
+type Action = one_of {
+    Draft(reply: glyph),
+    Escalate,
+    AskClarify(question: glyph),
+}
+
+type Disposition = {
+    urgency: spark in 0..10,
+    action: Action,
+}
+
+oracle triage = summon "mock-triage-v1"
+
+memory tickets { scope tenant, retention 24 months, retrieval recency, audit required }
+
+fn escalate() requires escalate {
+    print "escalated (fallback): low confidence"
+}
+
+familiar support_triage(msg) permits { invoke triage, escalate } {
+    # Embed the message (the embedding carries triage's space).
+    let query = triage.embed(msg)
+
+    # Retrieve scoped history; the read/write require the tenant scope, granted
+    # only inside `within`.
+    within tenant {
+        tickets.write(msg)
+        let history = tickets.recent(5)
+        print "recalled scoped history"
+    }
+
+    # Infer a typed Disposition; the result must clear the confidence gate before
+    # it can be used authoritatively, else we escalate.
+    divine decision: Disposition
+        from (msg)
+        using triage
+        with confidence >= 0.5
+        fallback escalate()
+
+    print "urgency: ${decision.urgency}"
+
+    # Dispatch over exactly the declared actions.
+    enact decision.action {
+        Draft(reply) => {
+            print "drafted reply: ${reply}"
+            print "provenance: ${provenance}"
+        }
+        Escalate => {
+            print "escalated to a human"
+            print "provenance: ${provenance}"
+        }
+        AskClarify(question) => {
+            print "asked: ${question}"
+            print "provenance: ${provenance}"
+        }
+    }
+}
+
+support_triage("payment failed for order 7")
