@@ -54,6 +54,33 @@ fn arithmetic_and_functions() {
 }
 
 #[test]
+fn familiar_lowers_like_a_function_and_matches_the_interpreter() {
+    // A familiar that uses only the host language + divine + enact compiles to a
+    // function (permits erased, single-pass body) and matches the interpreter.
+    let src = "\
+type Action = one_of { Draft(reply: glyph), Escalate }
+type Disposition = { urgency: spark in 0..10, action: Action }
+oracle triage = summon \"mock-triage-v1\"
+
+familiar handle(ticket) permits { invoke triage } {
+    divine decision: Disposition
+        from (ticket)
+        using triage
+        with confidence >= 0.0
+        fallback \"low\"
+    print \"urgency: ${decision.urgency}\"
+    enact decision.action {
+        Draft(reply) => { print \"drafted: ${reply}\" }
+        Escalate => { print \"escalate\" }
+    }
+}
+
+handle(\"printer on fire\")
+";
+    assert_equivalent(src);
+}
+
+#[test]
 fn comparisons_and_equality_and_booleans() {
     assert_equivalent("print 1 < 2\nprint 3 <= 3\nprint 5 > 9\nprint 4 >= 4");
     assert_equivalent("print 2 == 2\nprint 2 == 3\nprint 1 != 2");

@@ -46,12 +46,13 @@ pub fn lower_program_weaken(
                 let func = ctx.lower_function(&f.name, &f.params, &f.body)?;
                 ctx.functions.push(func);
             }
-            // Familiars are interpreter-only in v0.x.
+            // A familiar lowers exactly like a function: its `permits` are a
+            // compile-time boundary (erased before codegen, like `grant`), and its
+            // body runs single-pass. The interpreter treats it identically, so the
+            // compiled and interpreted results match.
             Item::Familiar(fam) => {
-                return Err(Diagnostic::runtime(
-                    "familiars are not supported by the compiler yet (use `witch run`)".to_string(),
-                    fam.span,
-                ));
+                let func = ctx.lower_function(&fam.name, &fam.params, &fam.body)?;
+                ctx.functions.push(func);
             }
             _ => {}
         }
