@@ -41,9 +41,19 @@ pub fn lower_program_weaken(
 
     // User functions.
     for item in &prog.items {
-        if let Item::Fn(f) = item {
-            let func = ctx.lower_function(&f.name, &f.params, &f.body)?;
-            ctx.functions.push(func);
+        match item {
+            Item::Fn(f) => {
+                let func = ctx.lower_function(&f.name, &f.params, &f.body)?;
+                ctx.functions.push(func);
+            }
+            // Familiars are interpreter-only in v0.x.
+            Item::Familiar(fam) => {
+                return Err(Diagnostic::runtime(
+                    "familiars are not supported by the compiler yet (use `witch run`)".to_string(),
+                    fam.span,
+                ));
+            }
+            _ => {}
         }
     }
 
@@ -98,6 +108,7 @@ fn collect_oracles(prog: &Program, ctx: &mut LowerCtx) {
         match item {
             Item::Stmt(s) => walk(std::slice::from_ref(s), ctx),
             Item::Fn(f) => walk(&f.body, ctx),
+            Item::Familiar(fam) => walk(&fam.body, ctx),
             Item::Type(_) => {}
         }
     }

@@ -2,7 +2,7 @@
    Mundane host syntax is un-themed; occult vocabulary names the genuinely new. *)
 
 program        = { item } ;
-item           = fn_decl | type_decl | statement ;
+item           = fn_decl | type_decl | familiar_decl | statement ;
 
 fn_decl        = "fn" ident "(" [ param { "," param } ] ")" [ ":" type ]
                  [ "requires" capability { "," capability } ] block ;
@@ -58,6 +58,11 @@ mem_setting    = "scope" ident
                | "audit" ident ;
 within_stmt    = "within" ident block ;
 (* memory access is postfix: mem.write(v) | mem.recent(k) *)
+
+(* Bounded composite; `permits` is the checkable capability boundary. *)
+familiar_decl  = "familiar" ident "(" [ param { "," param } ] ")"
+                 "permits" "{" [ permit { "," permit } ] "}" block ;
+permit         = ident [ ident ] ;        (* e.g. `escalate`, `invoke triage` *)
 
 (* Expressions, lowest to highest precedence. *)
 expr           = or_expr ;

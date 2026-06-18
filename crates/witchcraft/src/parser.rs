@@ -100,8 +100,64 @@ impl Parser {
         match self.peek_kind() {
             TokenKind::Fn => Ok(Item::Fn(self.fn_decl()?)),
             TokenKind::Type => Ok(Item::Type(self.type_decl()?)),
+            TokenKind::Familiar => Ok(Item::Familiar(self.familiar_decl()?)),
             _ => Ok(Item::Stmt(self.stmt()?)),
         }
+    }
+
+    fn familiar_decl(&mut self) -> Result<FamiliarDecl, Diagnostic> {
+        let span = self.span();
+        self.expect(TokenKind::Familiar, "`familiar`")?;
+        let (name, _) = self.expect_ident("a familiar name")?;
+        self.expect(TokenKind::LParen, "`(`")?;
+        let mut params = Vec::new();
+        while !self.check(&TokenKind::RParen) {
+            let (pname, pspan) = self.expect_ident("a parameter name")?;
+            let ty = if self.eat(&TokenKind::Colon) {
+                Some(self.type_expr()?)
+            } else {
+                None
+            };
+            params.push(Param {
+                name: pname,
+                ty,
+                span: pspan,
+            });
+            if !self.eat(&TokenKind::Comma) {
+                break;
+            }
+        }
+        self.expect(TokenKind::RParen, "`)`")?;
+        self.expect(TokenKind::Permits, "`permits` (the capability boundary)")?;
+        self.expect(TokenKind::LBrace, "`{` to open the permits set")?;
+        let mut permits = Vec::new();
+        while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
+            permits.push(self.permit()?);
+            if !self.eat(&TokenKind::Comma) {
+                break;
+            }
+        }
+        self.expect(TokenKind::RBrace, "`}` to close the permits set")?;
+        let body = self.block()?;
+        Ok(FamiliarDecl {
+            name,
+            params,
+            permits,
+            body,
+            span,
+        })
+    }
+
+    /// A permit entry: `<kind>` or `<kind> <param>` (e.g. `escalate`,
+    /// `invoke triage`, `read tickets`). Reuses the `Capability` identity.
+    fn permit(&mut self) -> Result<Capability, Diagnostic> {
+        let (kind, span) = self.expect_ident("a permit")?;
+        let param = if let TokenKind::Ident(_) = self.peek_kind() {
+            Some(self.expect_ident("a permit target")?.0)
+        } else {
+            None
+        };
+        Ok(Capability { kind, param, span })
     }
 
     fn fn_decl(&mut self) -> Result<FnDecl, Diagnostic> {

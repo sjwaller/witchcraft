@@ -96,6 +96,9 @@ struct Checker {
     oracles: HashMap<String, String>,
     /// Memory name → scope name, so reads/writes require `scope(<scope>)`.
     memories: HashMap<String, String>,
+    /// The familiar currently being checked (for permit-violation diagnostics and
+    /// the in-familiar `invoke <oracle>` rule).
+    current_familiar: Option<String>,
     diags: Vec<Diagnostic>,
 }
 
@@ -108,6 +111,7 @@ impl Checker {
             active_caps: Vec::new(),
             oracles: HashMap::new(),
             memories: HashMap::new(),
+            current_familiar: None,
             diags: Vec::new(),
         }
     }
@@ -137,15 +141,74 @@ impl Checker {
             match item {
                 Item::Stmt(s) => self.collect_resources(std::slice::from_ref(s)),
                 Item::Fn(f) => self.collect_resources(&f.body),
+                Item::Familiar(fam) => self.collect_resources(&fam.body),
                 Item::Type(_) => {}
             }
         }
-        // Pass 2: check fns and top-level statements.
+        // Pass 2: check fns, familiars, and top-level statements.
         for item in &prog.items {
             match item {
                 Item::Fn(f) => self.check_fn(f),
+                Item::Familiar(fam) => self.check_familiar(fam),
                 Item::Stmt(s) => self.check_stmt(s),
                 Item::Type(_) => {}
+            }
+        }
+    }
+
+    fn check_familiar(&mut self, fam: &FamiliarDecl) {
+        // The permits ARE the grants: the body is checked with exactly these
+        // capabilities active and no others (the bounded boundary, §5.4).
+        let saved_caps = std::mem::replace(&mut self.active_caps, fam.permits.clone());
+        let saved_fam = self.current_familiar.replace(fam.name.clone());
+        self.push();
+        for p in &fam.params {
+            let ty =
+                p.ty.as_ref()
+                    .and_then(|t| resolve_type(t, &self.types).ok())
+                    .unwrap_or(Type::Unknown);
+            self.define(&p.name, ty);
+        }
+        // §10 firebreak: a familiar is single-pass in v0.1 — no free-running loop.
+        self.reject_unbounded_iteration(&fam.body, &fam.name);
+        self.check_block(&fam.body);
+        self.pop();
+        self.current_familiar = saved_fam;
+        self.active_caps = saved_caps;
+    }
+
+    /// A familiar body may not contain an unbounded loop in v0.1 (single-pass).
+    fn reject_unbounded_iteration(&mut self, stmts: &[Stmt], fam: &str) {
+        for s in stmts {
+            match s {
+                Stmt::While { span, .. } => {
+                    self.diags.push(Diagnostic::type_error(
+                        format!(
+                            "familiar `{}` may not contain an unbounded loop (it is single-pass in v0.1; no declared finite stopping condition)",
+                            fam
+                        ),
+                        *span,
+                    ));
+                }
+                Stmt::If {
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
+                    self.reject_unbounded_iteration(then_branch, fam);
+                    if let Some(eb) = else_branch {
+                        self.reject_unbounded_iteration(eb, fam);
+                    }
+                }
+                Stmt::Within { body, .. } | Stmt::Grant { body, .. } => {
+                    self.reject_unbounded_iteration(body, fam)
+                }
+                Stmt::Enact { arms, .. } => {
+                    for a in arms {
+                        self.reject_unbounded_iteration(&a.body, fam);
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -236,15 +299,27 @@ impl Checker {
         };
         for cap in &required {
             if !self.cap_granted(cap) {
-                self.diags.push(Diagnostic::type_error(
-                    format!(
-                        "`{}` requires capability `{}`, which is not granted in this context",
-                        callee,
-                        cap.display()
-                    ),
-                    span,
-                ));
+                self.diags
+                    .push(Diagnostic::type_error(self.cap_error(callee, cap), span));
             }
+        }
+    }
+
+    /// Phrase a missing-capability error, naming the enclosing familiar (a
+    /// permit-violation) when one is being checked.
+    fn cap_error(&self, op: &str, cap: &Capability) -> String {
+        match &self.current_familiar {
+            Some(fam) => format!(
+                "permit violation: familiar `{}` performs `{}`, which requires `{}` — not in its `permits`",
+                fam,
+                op,
+                cap.display()
+            ),
+            None => format!(
+                "`{}` requires capability `{}`, which is not granted in this context",
+                op,
+                cap.display()
+            ),
         }
     }
 
@@ -360,6 +435,22 @@ impl Checker {
                 format!("unknown oracle `{}`", d.oracle),
                 d.oracle_span,
             )),
+        }
+        // Inside a familiar, invoking an oracle requires the `invoke <oracle>`
+        // permit (the bounded boundary; ambient code outside a familiar is
+        // unrestricted, preserving the bootstrap divine semantics).
+        if self.current_familiar.is_some() {
+            let cap = Capability {
+                kind: "invoke".to_string(),
+                param: Some(d.oracle.clone()),
+                span: d.oracle_span,
+            };
+            if !self.cap_granted(&cap) {
+                self.diags.push(Diagnostic::type_error(
+                    self.cap_error(&format!("divine using {}", d.oracle), &cap),
+                    d.oracle_span,
+                ));
+            }
         }
         for input in &d.inputs {
             let _ = self.infer(input);

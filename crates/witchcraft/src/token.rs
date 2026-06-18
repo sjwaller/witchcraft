@@ -56,6 +56,10 @@ pub enum TokenKind {
     Memory,
     Within,
 
+    // Bounded-familiar keywords
+    Familiar,
+    Permits,
+
     // Boolean / logical operators
     And,
     Or,
@@ -129,6 +133,8 @@ pub fn keyword(ident: &str) -> Option<TokenKind> {
         "grant" => TokenKind::Grant,
         "memory" => TokenKind::Memory,
         "within" => TokenKind::Within,
+        "familiar" => TokenKind::Familiar,
+        "permits" => TokenKind::Permits,
         "and" => TokenKind::And,
         "or" => TokenKind::Or,
         "not" => TokenKind::Not,

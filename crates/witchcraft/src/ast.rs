@@ -11,7 +11,20 @@ pub struct Program {
 pub enum Item {
     Fn(FnDecl),
     Type(TypeDecl),
+    Familiar(FamiliarDecl),
     Stmt(Stmt),
+}
+
+/// A `familiar` — a bounded, named composite (explicitly NOT a primitive, §5.5).
+/// Its `permits` set is the elevation-worthy, checkable capability boundary: the
+/// body is granted exactly these capabilities and no others.
+#[derive(Clone, Debug)]
+pub struct FamiliarDecl {
+    pub name: String,
+    pub params: Vec<Param>,
+    pub permits: Vec<Capability>,
+    pub body: Vec<Stmt>,
+    pub span: Span,
 }
 
 #[derive(Clone, Debug)]

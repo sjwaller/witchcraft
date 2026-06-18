@@ -223,6 +223,28 @@ same-space query embedding against stored embeddings) is composed in the flagshi
 Memory is interpreter-only in v0.1. The green check guarantees scope adherence —
 never that retained data is correct, audit complete, or retrieval relevant (§8).
 
+## Familiars: bounded agents whose permits are checkable
+
+A `familiar` is, deliberately, **not** a primitive — it is a named, bounded
+composite of oracle/`divine`/`enact` (and memory/embedding). The elevation-worthy,
+checkable thing is its `permits` set: the body is granted exactly those
+capabilities and no others, so an action outside the permits **will not compile**.
+
+```
+familiar support_triage(msg) permits { invoke triage, escalate } {
+    divine decision: Disposition from (msg) using triage
+        with confidence >= 0.7 fallback escalate()
+    enact decision.action { ... }     # only permitted actions
+}
+```
+
+In v0.1 a familiar is **single-pass and deterministic** (the §10 firebreak): no
+free-running loop or scheduler — an unbounded loop in a familiar body is a
+compile error. Inside a familiar, `divine ... using <oracle>` requires the
+`invoke <oracle>` permit. Familiars are interpreter-only in v0.1. A green check
+guarantees permit adherence and bounded structure — never that the agent's plan
+is sound, well-behaved, or terminates in practice (§8/§10).
+
 ## A green build is structural, not a correctness guarantee
 
 This cannot be overstated (paper §8): the compiler verifies **structural**

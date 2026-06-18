@@ -41,6 +41,7 @@ pub fn run(prog: &Program, config: RunConfig) -> Result<String, Diagnostic> {
 struct Interp {
     env: Env,
     fns: HashMap<String, FnDecl>,
+    familiars: HashMap<String, FamiliarDecl>,
     types: HashMap<String, Type>,
     decoder: MockDecoder,
     config: RunConfig,
@@ -62,14 +63,22 @@ struct MemoryStore {
 impl Interp {
     fn new(prog: &Program, config: RunConfig) -> Self {
         let mut fns = HashMap::new();
+        let mut familiars = HashMap::new();
         for item in &prog.items {
-            if let Item::Fn(f) = item {
-                fns.insert(f.name.clone(), f.clone());
+            match item {
+                Item::Fn(f) => {
+                    fns.insert(f.name.clone(), f.clone());
+                }
+                Item::Familiar(fam) => {
+                    familiars.insert(fam.name.clone(), fam.clone());
+                }
+                _ => {}
             }
         }
         Interp {
             env: Env::new(),
             fns,
+            familiars,
             types: build_type_table(prog),
             decoder: MockDecoder::new(config.seed),
             config,
@@ -564,6 +573,11 @@ impl Interp {
         if let Some(v) = self.call_builtin(name, &args, span)? {
             return Ok(v);
         }
+        // Familiars are callable like functions; permits are erased at run time
+        // (they are a compile-time boundary). The body runs single-pass.
+        if let Some(fam) = self.familiars.get(name).cloned() {
+            return self.call_familiar(&fam, args, span);
+        }
         let f = match self.fns.get(name) {
             Some(f) => f.clone(),
             None => {
@@ -595,6 +609,36 @@ impl Interp {
         match outcome? {
             Exec::Return(v) => Ok(v),
             Exec::Value(v) => Ok(v),
+        }
+    }
+
+    fn call_familiar(
+        &mut self,
+        fam: &FamiliarDecl,
+        args: Vec<Value>,
+        span: crate::span::Span,
+    ) -> Result<Value, Diagnostic> {
+        if args.len() != fam.params.len() {
+            return Err(Diagnostic::runtime(
+                format!(
+                    "familiar `{}` expects {} argument(s), got {}",
+                    fam.name,
+                    fam.params.len(),
+                    args.len()
+                ),
+                span,
+            ));
+        }
+        let call_env = self.env.global_only();
+        let saved = std::mem::replace(&mut self.env, call_env);
+        self.env.push();
+        for (p, v) in fam.params.iter().zip(args) {
+            let _ = self.env.define(&p.name, v, false);
+        }
+        let outcome = self.exec_block(&fam.body);
+        self.env = saved;
+        match outcome? {
+            Exec::Return(v) | Exec::Value(v) => Ok(v),
         }
     }
 
