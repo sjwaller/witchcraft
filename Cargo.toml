@@ -1,0 +1,9 @@
+[workspace]
+resolver = "2"
+members = ["crates/witchcraft", "crates/witch"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "CC-BY-4.0"
+repository = "https://github.com/sjwaller/witchcraft"

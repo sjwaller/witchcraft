@@ -1,0 +1,42 @@
+# The reduced §6.3 worked example: an oracle infers a typed Disposition, the
+# divine block discharges it against a confidence gate, and enact dispatches
+# over exactly the declared actions. Deleting any of these types would change
+# the computation at the moment of inference (the litmus test).
+
+type Action = one_of {
+    Draft(reply: glyph),
+    Escalate,
+    AskClarify(question: glyph),
+}
+
+type Disposition = {
+    urgency: spark in 0..10,
+    action: Action,
+}
+
+fn handle(ticket) {
+    oracle triage = summon "mock-triage-v1"
+
+    divine decision: Disposition
+        from (ticket)
+        using triage
+        with confidence >= 0.0
+        fallback "escalated: low confidence"
+
+    print "urgency: ${decision.urgency}"
+
+    enact decision.action {
+        Draft(reply) => {
+            print "drafted reply: ${reply}"
+            print "provenance: ${provenance}"
+        }
+        Escalate => {
+            print "escalated to a human"
+        }
+        AskClarify(question) => {
+            print "asked: ${question}"
+        }
+    }
+}
+
+handle("my printer is on fire")

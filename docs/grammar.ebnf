@@ -1,0 +1,61 @@
+(* Witchcraft v0.1 grammar (EBNF). Kept in step with crates/witchcraft/src/parser.rs.
+   Mundane host syntax is un-themed; occult vocabulary names the genuinely new. *)
+
+program        = { item } ;
+item           = fn_decl | type_decl | statement ;
+
+fn_decl        = "fn" ident "(" [ param { "," param } ] ")" [ ":" type ] block ;
+param          = ident [ ":" type ] ;
+
+type_decl      = "type" ident "=" type ;
+type           = record_type | sum_type | refined | named ;
+record_type    = "{" [ field { "," field } ] "}" ;
+field          = ident ":" type ;
+sum_type       = "one_of" "{" [ variant { "," variant } ] "}" ;
+variant        = ident [ "(" [ field { "," field } ] ")" ] ;
+refined        = ident "in" number ".." number ;       (* only `spark` may be refined *)
+named          = ident ;                                (* spark | glyph | bool | oracle | user type *)
+
+block          = "{" { statement } "}" ;
+
+statement      = let_stmt | var_stmt | assign | print_stmt
+               | while_stmt | if_stmt | return_stmt
+               | summon_stmt | divine_stmt | enact_stmt | expr ;
+
+let_stmt       = "let" ident [ ":" type ] "=" expr ;
+var_stmt       = "var" ident [ ":" type ] "=" expr ;
+assign         = ident "=" expr ;
+print_stmt     = "print" expr ;
+while_stmt     = "while" expr block ;
+if_stmt        = "if" expr block [ "else" block ] ;
+return_stmt    = "return" [ expr ] ;
+
+summon_stmt    = "oracle" ident "=" "summon" glyph_literal ;
+
+(* The discharge clause is grammar-OPTIONAL; the type system enforces discharge. *)
+divine_stmt    = "divine" ident ":" type
+                 "from" "(" [ expr { "," expr } ] ")"
+                 "using" ident
+                 [ "with" "confidence" ">=" number "fallback" expr ] ;
+
+enact_stmt     = "enact" expr "{" { enact_arm } "}" ;
+enact_arm      = ident [ "(" [ ident { "," ident } ] ")" ] "=>" block [ "," ] ;
+
+(* Expressions, lowest to highest precedence. *)
+expr           = or_expr ;
+or_expr        = and_expr { "or" and_expr } ;
+and_expr       = cmp_expr { "and" cmp_expr } ;
+cmp_expr       = add_expr { ( "<" | "<=" | ">" | ">=" | "==" | "!=" ) add_expr } ;
+add_expr       = mul_expr { ( "+" | "-" ) mul_expr } ;
+mul_expr       = unary { ( "*" | "/" ) unary } ;
+unary          = ( "not" | "-" ) unary | postfix ;
+postfix        = primary { "." ident [ "(" [ expr { "," expr } ] ")" ] } ;
+primary        = number | "true" | "false" | glyph_literal
+               | "(" expr ")"
+               | ident [ "(" [ expr { "," expr } ] ")" ]    (* call *)
+               | Ident [ "(" [ field_init { "," field_init } ] ")" ] ; (* variant ctor *)
+field_init     = ident [ ":" expr ] ;
+
+glyph_literal  = '"' { glyph_char | "${" expr "}" } '"' ;  (* ${...} interpolation *)
+number         = digit { digit } [ "." digit { digit } ] ;
+ident          = ( letter | "_" ) { letter | digit | "_" } ;

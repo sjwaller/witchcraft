@@ -1,0 +1,11 @@
+[package]
+name = "witchcraft"
+description = "The Witchcraft AI-native language: lexer, parser, type system, interpreter, and constrained decoder."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "witchcraft"
+path = "src/lib.rs"

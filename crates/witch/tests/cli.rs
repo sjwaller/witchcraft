@@ -1,0 +1,78 @@
+//! End-to-end CLI tests: invoke the built `witch` binary like a user would.
+
+use std::path::PathBuf;
+use std::process::Command;
+
+fn witch() -> Command {
+    Command::new(env!("CARGO_BIN_EXE_witch"))
+}
+
+fn examples_dir() -> PathBuf {
+    // crates/witch -> repo root -> examples
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples")
+        .canonicalize()
+        .expect("examples dir")
+}
+
+#[test]
+fn run_host_example_prints_to_stdout() {
+    let out = witch()
+        .arg("run")
+        .arg(examples_dir().join("host.witch"))
+        .output()
+        .expect("run witch");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Greetings, witch!"));
+    assert!(stdout.contains("arithmetic holds"));
+}
+
+#[test]
+fn check_passes_on_valid_program() {
+    let out = witch()
+        .arg("check")
+        .arg(examples_dir().join("triage.witch"))
+        .output()
+        .expect("run witch");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("passed structural checks"));
+    // The wording must NOT claim correctness (§8).
+    assert!(stdout.contains("does not assert"));
+}
+
+#[test]
+fn same_seed_is_reproducible() {
+    let run = |seed: &str| {
+        let out = witch()
+            .args(["run"])
+            .arg(examples_dir().join("triage.witch"))
+            .args(["--seed", seed])
+            .output()
+            .expect("run witch");
+        assert!(out.status.success());
+        String::from_utf8_lossy(&out.stdout).to_string()
+    };
+    assert_eq!(run("5"), run("5"));
+}
+
+#[test]
+fn missing_file_fails_gracefully() {
+    let out = witch()
+        .arg("run")
+        .arg("does-not-exist.witch")
+        .output()
+        .expect("run witch");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("does-not-exist.witch"));
+}
+
+#[test]
+fn unknown_command_shows_usage() {
+    let out = witch().arg("frobnicate").output().expect("run witch");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("usage"));
+}

@@ -1,0 +1,576 @@
+//! Tree-walking interpreter. Assumes the program already type-checked, but still
+//! reports runtime faults (undefined names, bad operands) as diagnostics rather
+//! than panicking. Inference goes through the `Decoder` seam; nothing here
+//! touches the network.
+
+use std::collections::HashMap;
+
+use crate::ast::*;
+use crate::decoder::{Decoder, MockDecoder};
+use crate::env::{AssignError, DefineError, Env};
+use crate::error::Diagnostic;
+use crate::grammar;
+use crate::typeck::{build_type_table, resolve_type};
+use crate::types::Type;
+use crate::value::{Provenance, Value};
+
+#[derive(Clone, Debug, Default)]
+pub struct RunConfig {
+    pub seed: u64,
+    /// Litmus knob: when true, every `divine` output type is weakened to free
+    /// text (as if the type were deleted), changing what is generated.
+    pub weaken_divine: bool,
+    /// Fault-injection knob: when set, every discharge sees this confidence.
+    pub force_confidence: Option<f64>,
+}
+
+enum Exec {
+    /// Statement produced a value (an expression statement) or unit.
+    Value(Value),
+    /// Control flow is unwinding to the enclosing function/program (explicit
+    /// `return`, or a `divine` fallback firing).
+    Return(Value),
+}
+
+pub fn run(prog: &Program, config: RunConfig) -> Result<String, Diagnostic> {
+    let mut interp = Interp::new(prog, config);
+    interp.run_program(prog)?;
+    Ok(interp.out)
+}
+
+struct Interp {
+    env: Env,
+    fns: HashMap<String, FnDecl>,
+    types: HashMap<String, Type>,
+    decoder: MockDecoder,
+    config: RunConfig,
+    out: String,
+}
+
+impl Interp {
+    fn new(prog: &Program, config: RunConfig) -> Self {
+        let mut fns = HashMap::new();
+        for item in &prog.items {
+            if let Item::Fn(f) = item {
+                fns.insert(f.name.clone(), f.clone());
+            }
+        }
+        Interp {
+            env: Env::new(),
+            fns,
+            types: build_type_table(prog),
+            decoder: MockDecoder::new(config.seed),
+            config,
+            out: String::new(),
+        }
+    }
+
+    fn run_program(&mut self, prog: &Program) -> Result<(), Diagnostic> {
+        for item in &prog.items {
+            if let Item::Stmt(s) = item {
+                if let Exec::Return(_) = self.exec_stmt(s)? {
+                    break;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn emit(&mut self, line: &str) {
+        self.out.push_str(line);
+        self.out.push('\n');
+    }
+
+    fn exec_block(&mut self, stmts: &[Stmt]) -> Result<Exec, Diagnostic> {
+        self.env.push();
+        let mut last = Value::Unit;
+        for s in stmts {
+            match self.exec_stmt(s)? {
+                Exec::Return(v) => {
+                    self.env.pop();
+                    return Ok(Exec::Return(v));
+                }
+                Exec::Value(v) => last = v,
+            }
+        }
+        self.env.pop();
+        Ok(Exec::Value(last))
+    }
+
+    fn exec_stmt(&mut self, s: &Stmt) -> Result<Exec, Diagnostic> {
+        match s {
+            Stmt::Let {
+                name, value, span, ..
+            } => {
+                let v = self.eval(value)?;
+                self.bind(name, v, false, *span)?;
+                Ok(Exec::Value(Value::Unit))
+            }
+            Stmt::Var {
+                name, value, span, ..
+            } => {
+                let v = self.eval(value)?;
+                self.bind(name, v, true, *span)?;
+                Ok(Exec::Value(Value::Unit))
+            }
+            Stmt::Assign { name, value, span } => {
+                let v = self.eval(value)?;
+                match self.env.assign(name, v) {
+                    Ok(()) => Ok(Exec::Value(Value::Unit)),
+                    Err(AssignError::Undefined) => Err(Diagnostic::runtime(
+                        format!("cannot assign to undefined variable `{}`", name),
+                        *span,
+                    )),
+                    Err(AssignError::Immutable) => Err(Diagnostic::runtime(
+                        format!("cannot reassign `let` binding `{}` (use `var`)", name),
+                        *span,
+                    )),
+                }
+            }
+            Stmt::Print { value, .. } => {
+                let v = self.eval(value)?;
+                self.emit(&v.display());
+                Ok(Exec::Value(Value::Unit))
+            }
+            Stmt::While { cond, body, span } => {
+                loop {
+                    let c = self.eval(cond)?;
+                    match c {
+                        Value::Bool(true) => {}
+                        Value::Bool(false) => break,
+                        other => {
+                            return Err(Diagnostic::runtime(
+                                format!(
+                                    "`while` condition must be bool, found {}",
+                                    other.type_name()
+                                ),
+                                *span,
+                            ))
+                        }
+                    }
+                    if let Exec::Return(v) = self.exec_block(body)? {
+                        return Ok(Exec::Return(v));
+                    }
+                }
+                Ok(Exec::Value(Value::Unit))
+            }
+            Stmt::If {
+                cond,
+                then_branch,
+                else_branch,
+                span,
+            } => {
+                let c = self.eval(cond)?;
+                match c {
+                    Value::Bool(true) => self.exec_block(then_branch),
+                    Value::Bool(false) => match else_branch {
+                        Some(eb) => self.exec_block(eb),
+                        None => Ok(Exec::Value(Value::Unit)),
+                    },
+                    other => Err(Diagnostic::runtime(
+                        format!("`if` condition must be bool, found {}", other.type_name()),
+                        *span,
+                    )),
+                }
+            }
+            Stmt::Summon { name, model, span } => {
+                let v = Value::Oracle {
+                    name: name.clone(),
+                    model: model.clone(),
+                };
+                self.bind(name, v, false, *span)?;
+                Ok(Exec::Value(Value::Unit))
+            }
+            Stmt::Return { value, .. } => {
+                let v = match value {
+                    Some(e) => self.eval(e)?,
+                    None => Value::Unit,
+                };
+                Ok(Exec::Return(v))
+            }
+            Stmt::Divine(d) => self.exec_divine(d),
+            Stmt::Enact {
+                subject,
+                arms,
+                span,
+            } => self.exec_enact(subject, arms, *span),
+            Stmt::Expr(e) => {
+                let v = self.eval(e)?;
+                Ok(Exec::Value(v))
+            }
+        }
+    }
+
+    fn bind(
+        &mut self,
+        name: &str,
+        value: Value,
+        mutable: bool,
+        span: crate::span::Span,
+    ) -> Result<(), Diagnostic> {
+        match self.env.define(name, value, mutable) {
+            Ok(()) => Ok(()),
+            Err(DefineError::Duplicate) => Err(Diagnostic::runtime(
+                format!("`{}` is already defined in this scope", name),
+                span,
+            )),
+        }
+    }
+
+    fn exec_divine(&mut self, d: &DivineStmt) -> Result<Exec, Diagnostic> {
+        for input in &d.inputs {
+            self.eval(input)?;
+        }
+        let out_ty = resolve_type(&d.out_ty, &self.types)
+            .map_err(|e| Diagnostic::runtime(e.message, d.span))?;
+        let g = grammar::compile(&out_ty, self.config.weaken_divine, d.span)
+            .map_err(|e| Diagnostic::runtime(e.message, d.span))?;
+
+        let model = match self.env.get(&d.oracle) {
+            Some(Value::Oracle { model, .. }) => model.clone(),
+            _ => "unknown".to_string(),
+        };
+        let provenance = Provenance {
+            oracle: d.oracle.clone(),
+            model,
+            seed: self.config.seed,
+        };
+
+        let decoded = self.decoder.decode(&g);
+        let confidence = self.config.force_confidence.unwrap_or(decoded.confidence);
+        let value = attach_provenance(decoded.value, &provenance);
+
+        match d.threshold {
+            Some(threshold) => {
+                if confidence >= threshold {
+                    self.bind(&d.name, value, false, d.span)?;
+                    Ok(Exec::Value(Value::Unit))
+                } else {
+                    // Discharge failed: run the fallback and unwind. The inferred
+                    // value never flows downstream (the fault-injection guarantee).
+                    let fb = match &d.fallback {
+                        Some(e) => self.eval(e)?,
+                        None => Value::Unit,
+                    };
+                    Ok(Exec::Return(fb))
+                }
+            }
+            None => {
+                // No discharge clause: bind as an inferred value. The type checker
+                // forbids authoritative use, so this is observable only via tools.
+                let inferred = Value::Inferred {
+                    inner: Box::new(value),
+                    confidence,
+                    provenance,
+                };
+                self.bind(&d.name, inferred, false, d.span)?;
+                Ok(Exec::Value(Value::Unit))
+            }
+        }
+    }
+
+    fn exec_enact(
+        &mut self,
+        subject: &Expr,
+        arms: &[EnactArm],
+        span: crate::span::Span,
+    ) -> Result<Exec, Diagnostic> {
+        let value = self.eval(subject)?;
+        let prov = value.provenance().cloned();
+        let (name, fields) = match value {
+            Value::Variant { name, fields, .. } => (name, fields),
+            other => {
+                return Err(Diagnostic::runtime(
+                    format!(
+                        "`enact` expects a variant value, found {}",
+                        other.type_name()
+                    ),
+                    span,
+                ))
+            }
+        };
+        let arm = match arms.iter().find(|a| a.variant == name) {
+            Some(a) => a,
+            None => {
+                return Err(Diagnostic::runtime(
+                    format!("no `enact` arm for variant `{}`", name),
+                    span,
+                ))
+            }
+        };
+        self.env.push();
+        for (i, b) in arm.bindings.iter().enumerate() {
+            let v = fields.get(i).map(|(_, v)| v.clone()).unwrap_or(Value::Unit);
+            let _ = self.env.define(b, v, false);
+        }
+        // Thread provenance into the action so it remains attached at the moment
+        // of execution.
+        if let Some(p) = &prov {
+            let _ = self
+                .env
+                .define("provenance", Value::Glyph(p.render()), false);
+        }
+        let mut result = Exec::Value(Value::Unit);
+        for s in &arm.body {
+            match self.exec_stmt(s)? {
+                Exec::Return(v) => {
+                    result = Exec::Return(v);
+                    break;
+                }
+                Exec::Value(_) => {}
+            }
+        }
+        self.env.pop();
+        Ok(result)
+    }
+
+    fn eval(&mut self, e: &Expr) -> Result<Value, Diagnostic> {
+        match e {
+            Expr::Number(n, _) => Ok(Value::Spark(*n)),
+            Expr::Bool(b, _) => Ok(Value::Bool(*b)),
+            Expr::Str(segs, _) => {
+                let mut s = String::new();
+                for seg in segs {
+                    match seg {
+                        StrSeg::Lit(t) => s.push_str(t),
+                        StrSeg::Interp(inner) => {
+                            let v = self.eval(inner)?;
+                            s.push_str(&v.display());
+                        }
+                    }
+                }
+                Ok(Value::Glyph(s))
+            }
+            Expr::Ident(name, span) => self
+                .env
+                .get(name)
+                .cloned()
+                .ok_or_else(|| Diagnostic::runtime(format!("undefined name `{}`", name), *span)),
+            Expr::Unary { op, rhs, span } => {
+                let v = self.eval(rhs)?;
+                match op {
+                    UnOp::Neg => match v {
+                        Value::Spark(n) => Ok(Value::Spark(-n)),
+                        other => Err(Diagnostic::runtime(
+                            format!("cannot negate {}", other.type_name()),
+                            *span,
+                        )),
+                    },
+                    UnOp::Not => match v {
+                        Value::Bool(b) => Ok(Value::Bool(!b)),
+                        other => Err(Diagnostic::runtime(
+                            format!("cannot apply `not` to {}", other.type_name()),
+                            *span,
+                        )),
+                    },
+                }
+            }
+            Expr::Binary { op, lhs, rhs, span } => self.eval_binary(*op, lhs, rhs, *span),
+            Expr::Call { callee, args, span } => {
+                let mut argv = Vec::new();
+                for a in args {
+                    argv.push(self.eval(a)?);
+                }
+                self.call_fn(callee, argv, *span)
+            }
+            Expr::Method {
+                recv, method, span, ..
+            } => {
+                let _ = self.eval(recv)?;
+                Err(Diagnostic::runtime(
+                    format!("unknown method `{}`", method),
+                    *span,
+                ))
+            }
+            Expr::Field { recv, field, span } => {
+                let r = self.eval(recv)?;
+                let prov = r.provenance().cloned();
+                let fields = match &r {
+                    Value::Record { fields, .. } | Value::Variant { fields, .. } => fields,
+                    other => {
+                        return Err(Diagnostic::runtime(
+                            format!("cannot read field `{}` of {}", field, other.type_name()),
+                            *span,
+                        ))
+                    }
+                };
+                match fields.iter().find(|(n, _)| n == field) {
+                    Some((_, v)) => Ok(propagate_provenance(v.clone(), prov.as_ref())),
+                    None => Err(Diagnostic::runtime(format!("no field `{}`", field), *span)),
+                }
+            }
+            Expr::Variant { name, fields, .. } => {
+                let mut fv = Vec::new();
+                for (n, fe) in fields {
+                    fv.push((n.clone(), self.eval(fe)?));
+                }
+                Ok(Value::Variant {
+                    name: name.clone(),
+                    fields: fv,
+                    provenance: None,
+                })
+            }
+        }
+    }
+
+    fn eval_binary(
+        &mut self,
+        op: BinOp,
+        lhs: &Expr,
+        rhs: &Expr,
+        span: crate::span::Span,
+    ) -> Result<Value, Diagnostic> {
+        use BinOp::*;
+        // Short-circuiting logical operators.
+        if matches!(op, And | Or) {
+            let l = self.eval(lhs)?;
+            let lb = as_bool(&l, span)?;
+            if op == And && !lb {
+                return Ok(Value::Bool(false));
+            }
+            if op == Or && lb {
+                return Ok(Value::Bool(true));
+            }
+            let r = self.eval(rhs)?;
+            return Ok(Value::Bool(as_bool(&r, span)?));
+        }
+
+        let l = self.eval(lhs)?;
+        let r = self.eval(rhs)?;
+        match op {
+            Add | Sub | Mul | Div => {
+                let a = as_spark(&l, span)?;
+                let b = as_spark(&r, span)?;
+                let v = match op {
+                    Add => a + b,
+                    Sub => a - b,
+                    Mul => a * b,
+                    Div => {
+                        if b == 0.0 {
+                            return Err(Diagnostic::runtime("division by zero", span));
+                        }
+                        a / b
+                    }
+                    _ => unreachable!(),
+                };
+                Ok(Value::Spark(v))
+            }
+            Lt | Le | Gt | Ge => {
+                let a = as_spark(&l, span)?;
+                let b = as_spark(&r, span)?;
+                let v = match op {
+                    Lt => a < b,
+                    Le => a <= b,
+                    Gt => a > b,
+                    Ge => a >= b,
+                    _ => unreachable!(),
+                };
+                Ok(Value::Bool(v))
+            }
+            Eq => Ok(Value::Bool(l == r)),
+            Ne => Ok(Value::Bool(l != r)),
+            And | Or => unreachable!(),
+        }
+    }
+
+    fn call_fn(
+        &mut self,
+        name: &str,
+        args: Vec<Value>,
+        span: crate::span::Span,
+    ) -> Result<Value, Diagnostic> {
+        let f = match self.fns.get(name) {
+            Some(f) => f.clone(),
+            None => {
+                return Err(Diagnostic::runtime(
+                    format!("unknown function `{}`", name),
+                    span,
+                ))
+            }
+        };
+        if args.len() != f.params.len() {
+            return Err(Diagnostic::runtime(
+                format!(
+                    "function `{}` expects {} argument(s), got {}",
+                    name,
+                    f.params.len(),
+                    args.len()
+                ),
+                span,
+            ));
+        }
+        let call_env = self.env.global_only();
+        let saved = std::mem::replace(&mut self.env, call_env);
+        self.env.push();
+        for (p, v) in f.params.iter().zip(args) {
+            let _ = self.env.define(&p.name, v, false);
+        }
+        let outcome = self.exec_block(&f.body);
+        self.env = saved;
+        match outcome? {
+            Exec::Return(v) => Ok(v),
+            Exec::Value(v) => Ok(v),
+        }
+    }
+}
+
+fn as_spark(v: &Value, span: crate::span::Span) -> Result<f64, Diagnostic> {
+    match v {
+        Value::Spark(n) => Ok(*n),
+        other => Err(Diagnostic::runtime(
+            format!("expected spark, found {}", other.type_name()),
+            span,
+        )),
+    }
+}
+
+fn as_bool(v: &Value, span: crate::span::Span) -> Result<bool, Diagnostic> {
+    match v {
+        Value::Bool(b) => Ok(*b),
+        other => Err(Diagnostic::runtime(
+            format!("expected bool, found {}", other.type_name()),
+            span,
+        )),
+    }
+}
+
+fn attach_provenance(v: Value, prov: &Provenance) -> Value {
+    match v {
+        Value::Record { fields, .. } => Value::Record {
+            fields,
+            provenance: Some(prov.clone()),
+        },
+        Value::Variant { name, fields, .. } => Value::Variant {
+            name,
+            fields,
+            provenance: Some(prov.clone()),
+        },
+        other => other,
+    }
+}
+
+fn propagate_provenance(v: Value, prov: Option<&Provenance>) -> Value {
+    let prov = match prov {
+        Some(p) => p,
+        None => return v,
+    };
+    match v {
+        Value::Record {
+            fields,
+            provenance: None,
+        } => Value::Record {
+            fields,
+            provenance: Some(prov.clone()),
+        },
+        Value::Variant {
+            name,
+            fields,
+            provenance: None,
+        } => Value::Variant {
+            name,
+            fields,
+            provenance: Some(prov.clone()),
+        },
+        other => other,
+    }
+}
