@@ -1,0 +1,17 @@
+# Deployment binding: bind the cloud-triage-v1 need to a REAL frontier API
+# engine (Anthropic-style). The model is named ONLY here, per the contract.
+#
+# The frontier engine is non-litmus-safe (it enforces a JSON schema server-side
+# with no observable token-level mask). Paired with the litmus-strict divine in
+# examples/strict_divine.witch, resolving this manifest makes the program REFUSE
+# TO START — the validate-after engine cannot serve a strict need silently.
+
+[need.cloud-triage-v1]
+engine = "frontier-large"
+model = "frontier-large-v1"
+locality = "network"
+latency = "batch"
+
+[engine.frontier-large]
+kind = "anthropic"
+api_key_env = "ANTHROPIC_API_KEY"

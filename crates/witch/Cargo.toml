@@ -12,3 +12,9 @@ path = "src/main.rs"
 
 [dependencies]
 witchcraft = { path = "../witchcraft" }
+
+[features]
+# Forward the real-engine features so the CLI can bind needs to local llama.cpp
+# or a network frontier provider. The default build stays offline (Mock only).
+llama = ["witchcraft/llama"]
+frontier = ["witchcraft/frontier"]

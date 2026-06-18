@@ -8,3 +8,7 @@ openspec.zip
 # Rust build output (for when implementation lands)
 /target
 **/target
+
+# Local model artifacts (GGUF weights are named only in manifests, never committed)
+/models
+*.gguf

@@ -1,0 +1,14 @@
+# Deployment manifest: bind the TriageReasoner need to a real local llama.cpp
+# engine. The MODEL is named ONLY here (the contract forbids a model name in
+# application source). Swap this file for triage.laptop.toml (mock) or
+# triage.cloud.toml (frontier) with zero source change.
+
+[need.TriageReasoner]
+engine = "local-qwen"
+locality = "local"
+latency = "interactive"
+
+[engine.local-qwen]
+kind = "llama"
+# GGUF weights sit beside the binary; path is the only model reference anywhere.
+gguf = "models/qwen2.5-0.5b-instruct-q4_k_m.gguf"

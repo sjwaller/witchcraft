@@ -196,6 +196,40 @@ token the weakened grammar permitted was **forbidden** by the real grammar
 If masking cannot be shown, the test fails loudly: the engine is a wrapper, not
 AI-first.
 
+**Verified against a real model.** The litmus does not just hold for the Mock —
+it holds against real **llama.cpp** weights via the GBNF grammar sampler. With a
+local GGUF model (any small quantised model is enough — we test the *masking
+mechanism*, not quality):
+
+```bash
+brew install cmake                       # build prereq for llama.cpp
+# fetch any small GGUF into ./models, then:
+WITCHCRAFT_GGUF=$PWD/models/<model>.gguf \
+  cargo test -p witchcraft --features llama real_llama -- --nocapture
+```
+
+The real GBNF sampler drives a free-text token to `-inf` at the very first decode
+step under the typed grammar, and the full real generation produces an *in-type*
+`Record { urgency, action }` by construction while the weakened grammar wanders to
+free text. That is grammar-by-construction surviving contact with a real
+tokenizer.
+
+**Non-litmus-safe engines refuse at runtime.** A frontier API enforces a schema
+server-side with no observable token mask, so it is marked non-litmus-safe. A
+litmus-strict `divine` bound to it **refuses to start** — proven at the CLI, not
+just in a unit test:
+
+```bash
+cargo run -p witch --features frontier -- run examples/strict_divine.witch \
+  --manifest examples/manifests/triage.frontier.toml
+# error[runtime]: refuse to start: need `cloud-triage-v1` is litmus-strict but
+# engine `frontier-large` is non-litmus-safe (...); add a source-visible
+# downgrade to run anyway
+```
+
+The validate-after engine cannot silently serve a strict need; the program never
+runs a line until the policy is satisfiable.
+
 ### Determinism honesty (§8)
 
 With the **Mock** engine, the same `--seed` reproduces output exactly. With a real

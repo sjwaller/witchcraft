@@ -121,3 +121,118 @@ fn mock_engine_is_grammar_constrained_and_litmus_safe() {
         "Mock is the deterministic litmus oracle"
     );
 }
+
+/// THE MAKE-OR-BREAK: run the falsification test against REAL llama.cpp weights,
+/// using its real GBNF sampler — not the Mock. The model is named only in the
+/// manifest (the contract); this test reads the GGUF path from `WITCHCRAFT_GGUF`
+/// and resolves the engine through `Manifest::resolve`, exactly as a deployment
+/// would. The headline assertion is that the type MASKED a token during
+/// generation on a real tokenizer: a concrete forbidden token at a concrete
+/// decode step that the weakened grammar permitted but the real grammar's
+/// sampler drove to -inf. Run with:
+///
+///   WITCHCRAFT_GGUF=$PWD/models/<model>.gguf \
+///     cargo test --features llama real_llama -- --nocapture
+///
+/// §8 honesty: this proves the type masks SHAPE, never that the output is good.
+#[cfg(feature = "llama")]
+#[test]
+fn real_llama_masks_tokens_during_generation() {
+    use witchcraft::engine::falsify;
+    use witchcraft::manifest::Manifest;
+
+    let gguf = match std::env::var("WITCHCRAFT_GGUF") {
+        Ok(p) if !p.is_empty() => p,
+        _ => {
+            eprintln!(
+                "SKIP real_llama_masks_tokens_during_generation: set WITCHCRAFT_GGUF to a \
+                 local GGUF path to run the make-or-break litmus against real weights."
+            );
+            return;
+        }
+    };
+
+    // The model is named ONLY here (a synthetic manifest), per the contract.
+    let manifest_src = format!(
+        "[need.TriageReasoner]\nengine = \"local-llm\"\nlocality = \"local\"\n\n\
+         [engine.local-llm]\nkind = \"llama\"\ngguf = \"{gguf}\"\n"
+    );
+    let manifest = Manifest::parse(&manifest_src).expect("manifest parses");
+    let policy = witchcraft::engine::Policy::default();
+    let mut engine = manifest
+        .resolve("TriageReasoner", &policy, 7)
+        .unwrap_or_else(|e| panic!("{}", e.message()));
+
+    assert_eq!(
+        engine.describe().backend_id,
+        "llama",
+        "the falsification must run against the real llama engine, not the Mock"
+    );
+
+    let outcome = falsify(
+        engine.as_mut(),
+        "TriageReasoner",
+        "the customer is furious about a double charge",
+        &real_grammar(),
+        &weakened_grammar(),
+        7,
+    );
+
+    // For a fuller, honest picture, also show what the real model actually
+    // GENERATED under each grammar (token-by-token through the real sampler):
+    // the typed grammar yields an in-type structured value by construction; the
+    // weakened grammar is free to wander out of it.
+    use witchcraft::engine::{InferRequest, Policy};
+    let p = Policy::default();
+    let real_out = engine.infer(&InferRequest {
+        intent_id: "TriageReasoner",
+        input: "the customer is furious about a double charge",
+        grammar: &real_grammar(),
+        policy: &p,
+        seed: 7,
+    });
+    let weak_out = engine.infer(&InferRequest {
+        intent_id: "TriageReasoner",
+        input: "the customer is furious about a double charge",
+        grammar: &weakened_grammar(),
+        policy: &p,
+        seed: 7,
+    });
+
+    eprintln!("=== REAL-SAMPLER MASKING WITNESS (llama.cpp / GBNF) ===");
+    eprintln!("backend     : {}", outcome.backend_id);
+    eprintln!("masked      : {}", outcome.masked);
+    eprintln!("reason      : {}", outcome.reason);
+    eprintln!(
+        "real-type generation (in-type by construction): {:?}",
+        real_out.value
+    );
+    eprintln!(
+        "weakened generation  (free to leave the type) : {:?}",
+        weak_out.value
+    );
+    if let Some(w) = &outcome.witness {
+        eprintln!("witness.step           : {}", w.step);
+        eprintln!("witness.forbidden_token: {:?}", w.forbidden_token);
+        eprintln!(
+            "interpretation         : at decode step {}, the real type's GBNF sampler drove \
+             token {:?} to -inf; the weakened (free-text) grammar permitted it. The type masked \
+             generation on real weights.",
+            w.step, w.forbidden_token
+        );
+    }
+    eprintln!("=======================================================");
+
+    assert!(
+        outcome.masked,
+        "LITMUS FAILED against real llama.cpp: {}",
+        outcome.reason
+    );
+    let witness = outcome
+        .witness
+        .expect("a real-sampler masking witness is recorded");
+    assert!(
+        !witness.forbidden_token.is_empty(),
+        "the witness must name a concrete forbidden token"
+    );
+}

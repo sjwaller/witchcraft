@@ -1,0 +1,27 @@
+# The strict-refusal demonstration (change `add-inference-runtime`,
+# Verification A) — run at the CLI, not just a unit test.
+#
+# This `divine` site grants `permit(network)` (so the network policy IS
+# satisfied) but it does NOT downgrade: it stays litmus-strict by default.
+# Bind it (via examples/manifests/triage.frontier.toml) to a real frontier
+# engine, which is non-litmus-safe because it enforces a schema server-side
+# with no observable token mask. The program must REFUSE TO START: a
+# validate-after engine cannot silently serve a litmus-strict need.
+#
+# To run anyway, the author would have to add a source-visible downgrade
+# (`permit(unsafe_inference)`) — i.e. accept the §8 limit explicitly.
+
+type Action = one_of { Draft(reply: glyph), Escalate }
+type Disposition = { urgency: spark in 0..10, action: Action }
+
+oracle triage = summon "cloud-triage-v1"
+
+with grant permit(network) {
+    divine decision: Disposition
+        from ("the customer is furious about a double charge")
+        using triage
+        with confidence >= 0.5
+        fallback "low confidence"
+
+    print "should never run: ${decision.urgency}"
+}

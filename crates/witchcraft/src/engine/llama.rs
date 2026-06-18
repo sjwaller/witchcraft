@@ -19,7 +19,9 @@ use llama_cpp_2::context::params::LlamaContextParams;
 use llama_cpp_2::llama_backend::LlamaBackend;
 use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
-use llama_cpp_2::model::{AddBos, LlamaModel, Special};
+#[allow(deprecated)]
+use llama_cpp_2::model::Special;
+use llama_cpp_2::model::{AddBos, LlamaModel};
 use llama_cpp_2::sampling::LlamaSampler;
 use llama_cpp_2::token::data::LlamaTokenData;
 use llama_cpp_2::token::data_array::LlamaTokenDataArray;
@@ -104,20 +106,23 @@ impl LlamaEngine {
         ctx.decode(&mut batch).map_err(|e| format!("decode: {e}"))?;
 
         let gbnf = grammar_to_gbnf(req.grammar);
-        let mut sampler = LlamaSampler::chain_simple([
-            LlamaSampler::grammar(&self.model, &gbnf, "root"),
-            LlamaSampler::dist(req.seed),
-        ]);
+        let grammar_sampler = LlamaSampler::grammar(&self.model, &gbnf, "root")
+            .map_err(|e| format!("grammar sampler: {e}"))?;
+        let mut sampler =
+            LlamaSampler::chain_simple([grammar_sampler, LlamaSampler::dist(req.seed as u32)]);
 
         let mut out = String::new();
-        let mut pos = tokens.len() as i32;
-        for _ in 0..512 {
+        let start = tokens.len() as i32;
+        for pos in (start..).take(512) {
             let idx = batch.n_tokens() - 1;
+            // `llama_sampler_sample` applies the chain (grammar mask included) AND
+            // accepts the chosen token internally — so we must NOT accept again,
+            // or the grammar advances twice and its stacks corrupt.
             let token = sampler.sample(&ctx, idx);
-            sampler.accept(token);
             if self.model.is_eog_token(token) {
                 break;
             }
+            #[allow(deprecated)]
             if let Ok(piece) = self.model.token_to_str(token, Special::Plaintext) {
                 out.push_str(&piece);
             }
@@ -126,7 +131,6 @@ impl LlamaEngine {
                 .add(token, pos, &[0], true)
                 .map_err(|e| format!("batch: {e}"))?;
             ctx.decode(&mut batch).map_err(|e| format!("decode: {e}"))?;
-            pos += 1;
         }
         Ok(out)
     }
@@ -139,7 +143,10 @@ impl LlamaEngine {
     /// re-derivation of the grammar.
     fn permitted_first_step(&self, grammar: &Grammar) -> Vec<String> {
         let gbnf = grammar_to_gbnf(grammar);
-        let mut grammar_sampler = LlamaSampler::grammar(&self.model, &gbnf, "root");
+        let grammar_sampler = match LlamaSampler::grammar(&self.model, &gbnf, "root") {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
         let candidates = crate::engine::permitted_tokens(&Grammar::Text { max_len: 1 })
             .into_iter()
             .next()
