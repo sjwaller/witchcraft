@@ -10,7 +10,7 @@
 //! Logical and display semantics deliberately match the interpreter's
 //! `witchcraft::value::Value` so the compiled and interpreted paths agree (D6).
 
-use crate::heap::{alloc, is_heap, obj};
+use crate::heap::{alloc, is_heap, obj, obj_mut, refcount, retain};
 
 pub const TAG_UNIT: u64 = 0;
 pub const TAG_BOOL: u64 = 1;
@@ -210,6 +210,86 @@ pub fn provenance(v: Value) -> Option<Provenance> {
         }
         Payload::Inferred { provenance, .. } => Some(provenance.clone()),
         Payload::Glyph(_) => None,
+    }
+}
+
+// ---------- provenance threading (must match the interpreter) ----------
+
+/// Attach provenance to a freshly produced record/variant **in place**. Safe
+/// only when the caller holds the sole reference (e.g. the value just returned by
+/// the decoder). Scalars and glyphs are returned unchanged. Mirrors the
+/// interpreter's `attach_provenance` (top level only).
+pub fn set_top_provenance(v: Value, prov: Provenance) -> Value {
+    if !matches!(v.tag, TAG_RECORD | TAG_VARIANT) {
+        return v;
+    }
+    debug_assert_eq!(refcount(v), 1, "set_top_provenance requires sole ownership");
+    let payload = &mut unsafe { obj_mut(v) }.payload;
+    match payload {
+        Payload::Record { provenance, .. } | Payload::Variant { provenance, .. } => {
+            *provenance = Some(prov);
+        }
+        _ => {}
+    }
+    v
+}
+
+/// Read a field and propagate the parent's provenance into the child if the
+/// child is a record/variant that carries none — mirrors the interpreter's
+/// `propagate_provenance` on field access. Returns an owned reference.
+pub fn field_propagating(recv: Value, name: &str) -> Value {
+    let parent_prov = provenance(recv);
+    let child = field(recv, name);
+
+    if let Some(p) = parent_prov {
+        let needs = match child.tag {
+            TAG_RECORD | TAG_VARIANT => provenance(child).is_none(),
+            _ => false,
+        };
+        if needs {
+            return clone_with_provenance(child, p);
+        }
+    }
+    retain(child);
+    child
+}
+
+/// Build a new record/variant with the same (retained) fields plus `prov`.
+fn clone_with_provenance(v: Value, prov: Provenance) -> Value {
+    match &unsafe { obj(v) }.payload {
+        Payload::Record { fields, .. } => {
+            let cloned = retain_fields(fields);
+            record(cloned, Some(prov))
+        }
+        Payload::Variant {
+            name, tag, fields, ..
+        } => {
+            let (name, tag) = (name.clone(), *tag);
+            let cloned = retain_fields(fields);
+            variant(&name, tag, cloned, Some(prov))
+        }
+        _ => {
+            retain(v);
+            v
+        }
+    }
+}
+
+fn retain_fields(fields: &[(String, Value)]) -> Vec<(String, Value)> {
+    fields
+        .iter()
+        .map(|(n, c)| {
+            retain(*c);
+            (n.clone(), *c)
+        })
+        .collect()
+}
+
+/// A glyph rendering of a value's provenance (empty glyph if it has none).
+pub fn provenance_glyph(v: Value) -> Value {
+    match provenance(v) {
+        Some(p) => glyph(&p.render()),
+        None => glyph(""),
     }
 }
 

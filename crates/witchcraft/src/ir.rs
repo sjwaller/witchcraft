@@ -95,6 +95,12 @@ pub enum Instr {
         dst: Tmp,
         recv: Operand,
     },
+    /// A glyph rendering of a value's provenance (what `enact` binds to
+    /// `provenance`); empty glyph when the value carries none.
+    ProvenanceGlyph {
+        dst: Tmp,
+        recv: Operand,
+    },
 
     Call {
         dst: Tmp,

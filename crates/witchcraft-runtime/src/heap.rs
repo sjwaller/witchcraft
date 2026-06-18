@@ -57,6 +57,24 @@ pub(crate) unsafe fn obj<'a>(v: Value) -> &'a HeapObj {
     &*(v.bits as *const HeapObj)
 }
 
+/// Mutably borrow the heap object behind a heap-tagged value.
+///
+/// # Safety
+/// In addition to [`obj`]'s requirements, the caller must hold the **only**
+/// reference (refcount 1) — values are otherwise immutable and shared.
+pub(crate) unsafe fn obj_mut<'a>(v: Value) -> &'a mut HeapObj {
+    &mut *(v.bits as *mut HeapObj)
+}
+
+/// The current refcount of a heap value (1 for a freshly allocated value).
+pub(crate) fn refcount(v: Value) -> usize {
+    if is_heap(v.tag) {
+        unsafe { obj(v) }.rc.get()
+    } else {
+        0
+    }
+}
+
 /// Increment the refcount of a heap value; a no-op for unboxed scalars.
 pub fn retain(v: Value) {
     if is_heap(v.tag) {

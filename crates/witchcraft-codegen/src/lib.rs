@@ -22,17 +22,21 @@
 //! uniform.
 //!
 //! ## Scope
-//! The host language (scalars, glyphs + interpolation, arithmetic/comparison,
-//! `if`/`while`, `fn`/calls, `print`) is compiled here. `divine`, `enact`,
-//! records, and variants are reported as not-yet-supported and land in group 4.
+//! The full v0.1 language compiles here: the host language (scalars, glyphs +
+//! interpolation, arithmetic/comparison, `if`/`while`, `fn`/calls, `print`) plus
+//! the AI-native core — `divine` (embedded grammar + runtime decode + discharge),
+//! `enact` (variant-tag dispatch), records/variants, inferred values, and
+//! provenance threading.
 
 use std::collections::HashMap;
 
 use cranelift_codegen::ir::condcodes::FloatCC;
-use cranelift_codegen::ir::types::{I64, I8};
-use cranelift_codegen::ir::{AbiParam, InstBuilder, MemFlags, Signature, Value as CValue};
+use cranelift_codegen::ir::types::{F64, I32, I64, I8};
+use cranelift_codegen::ir::{
+    AbiParam, InstBuilder, MemFlags, Signature, StackSlotData, StackSlotKind, Value as CValue,
+};
 use cranelift_codegen::settings::{self, Configurable};
-use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
+use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Switch, Variable};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{default_libcall_names, DataDescription, FuncId, Linkage, Module};
 
@@ -52,22 +56,45 @@ struct Runtime {
     retain: FuncId,
     release: FuncId,
     equals: FuncId,
+    field: FuncId,
+    variant_field: FuncId,
+    variant_tag: FuncId,
+    provenance_glyph: FuncId,
+    divine: FuncId,
+    make_inferred: FuncId,
+    builder_new: FuncId,
+    builder_push: FuncId,
+    record_finish: FuncId,
+    variant_finish: FuncId,
+}
+
+/// Knobs for a compiled run, mirroring the interpreter's `RunConfig`.
+#[derive(Clone, Copy, Default)]
+pub struct RunOptions {
+    pub seed: u64,
+    /// Fault-injection: force every discharge to see this confidence.
+    pub force_confidence: Option<f64>,
+}
+
+impl RunOptions {
+    pub fn seed(seed: u64) -> Self {
+        RunOptions {
+            seed,
+            force_confidence: None,
+        }
+    }
 }
 
 /// JIT-compile `prog` and run its `main` in-process under `seed`, printing to
-/// stdout. The runtime value model, refcounting, and print sink are linked in.
+/// stdout. The runtime value model, refcounting, decoder, and print sink link in.
 pub fn run(prog: &ir::Program, seed: u64) -> Result<(), String> {
     let (mut module, main_id) = jit_compile(prog)?;
     module
         .finalize_definitions()
         .map_err(|e| format!("finalize: {e}"))?;
     let code = module.get_finalized_function(main_id);
-    witchcraft_runtime::set_seed(seed);
-    let main_fn = unsafe {
-        std::mem::transmute::<*const u8, extern "C" fn() -> witchcraft_runtime::Value>(code)
-    };
-    let result = main_fn();
-    witchcraft_runtime::release(result);
+    apply_options(RunOptions::seed(seed));
+    unsafe { call_main(code) };
     // Keep the module alive until execution has finished.
     drop(module);
     Ok(())
@@ -76,21 +103,36 @@ pub fn run(prog: &ir::Program, seed: u64) -> Result<(), String> {
 /// Like [`run`], but captures `print` output and returns it (for the equivalence
 /// harness — compiled output compared against the interpreter).
 pub fn run_capture(prog: &ir::Program, seed: u64) -> Result<String, String> {
+    run_capture_with(prog, RunOptions::seed(seed))
+}
+
+/// [`run_capture`] with explicit options (seed + fault injection).
+pub fn run_capture_with(prog: &ir::Program, options: RunOptions) -> Result<String, String> {
     let (mut module, main_id) = jit_compile(prog)?;
     module
         .finalize_definitions()
         .map_err(|e| format!("finalize: {e}"))?;
     let code = module.get_finalized_function(main_id);
-    witchcraft_runtime::set_seed(seed);
+    apply_options(options);
     witchcraft_runtime::begin_capture();
-    let main_fn = unsafe {
-        std::mem::transmute::<*const u8, extern "C" fn() -> witchcraft_runtime::Value>(code)
-    };
-    let result = main_fn();
-    witchcraft_runtime::release(result);
+    unsafe { call_main(code) };
     let out = witchcraft_runtime::end_capture();
     drop(module);
     Ok(out)
+}
+
+fn apply_options(options: RunOptions) {
+    witchcraft_runtime::set_seed(options.seed);
+    witchcraft_runtime::set_force_confidence(options.force_confidence);
+}
+
+/// # Safety
+/// `code` must be the finalized `witch_main` of a module kept alive for the call.
+unsafe fn call_main(code: *const u8) {
+    let main_fn =
+        std::mem::transmute::<*const u8, extern "C" fn() -> witchcraft_runtime::Value>(code);
+    let result = main_fn();
+    witchcraft_runtime::release(result);
 }
 
 fn jit_compile(prog: &ir::Program) -> Result<(JITModule, FuncId), String> {
@@ -121,12 +163,23 @@ fn register_runtime_symbols(builder: &mut JITBuilder) {
     builder.symbol("w_retain", w_retain as *const u8);
     builder.symbol("w_release", w_release as *const u8);
     builder.symbol("w_equals", w_equals as *const u8);
+    builder.symbol("w_field", w_field as *const u8);
+    builder.symbol("w_variant_field", w_variant_field as *const u8);
+    builder.symbol("w_variant_tag", w_variant_tag as *const u8);
+    builder.symbol("w_provenance_glyph", w_provenance_glyph as *const u8);
+    builder.symbol("w_divine", w_divine as *const u8);
+    builder.symbol("w_make_inferred", w_make_inferred as *const u8);
+    builder.symbol("w_builder_new", w_builder_new as *const u8);
+    builder.symbol("w_builder_push", w_builder_push as *const u8);
+    builder.symbol("w_record_finish", w_record_finish as *const u8);
+    builder.symbol("w_variant_finish", w_variant_finish as *const u8);
 }
 
 /// Declare the runtime functions and every Witchcraft function, then generate
 /// each body. Returns the `FuncId` of `main`. Generic over the module kind.
 fn build<M: Module>(module: &mut M, prog: &ir::Program) -> Result<FuncId, String> {
     let rt = declare_runtime(module)?;
+    let grammar_addrs = leak_grammars(prog);
 
     let mut fn_ids: HashMap<String, FuncId> = HashMap::new();
     for f in &prog.functions {
@@ -138,11 +191,77 @@ fn build<M: Module>(module: &mut M, prog: &ir::Program) -> Result<FuncId, String
     let mut fbctx = FunctionBuilderContext::new();
     for f in &prog.functions {
         let id = fn_ids[&f.name];
-        gen_function(module, &mut fbctx, &rt, &fn_ids, f, id)?;
+        gen_function(module, &mut fbctx, &rt, &fn_ids, &grammar_addrs, f, id)?;
     }
-    gen_function(module, &mut fbctx, &rt, &fn_ids, &prog.main, main_id)?;
+    gen_function(
+        module,
+        &mut fbctx,
+        &rt,
+        &fn_ids,
+        &grammar_addrs,
+        &prog.main,
+        main_id,
+    )?;
 
     Ok(main_id)
+}
+
+/// Convert each `divine` site's compiled grammar to the runtime representation,
+/// leak it (one per site, process lifetime), and return its address as an `i64`
+/// constant the `Decode` codegen embeds. Variant tags use the program's interned
+/// ids so a decoded variant dispatches correctly through a compiled `enact`.
+///
+/// (Object builds will serialise these into a data section instead — see group 5.)
+fn leak_grammars(prog: &ir::Program) -> Vec<i64> {
+    let name_to_tag: HashMap<&str, u32> = prog
+        .variant_names
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (n.as_str(), i as u32))
+        .collect();
+    prog.grammars
+        .iter()
+        .map(|g| {
+            let rt_grammar = convert_grammar(g, &name_to_tag);
+            Box::into_raw(Box::new(rt_grammar)) as i64
+        })
+        .collect()
+}
+
+fn convert_grammar(
+    g: &witchcraft::grammar::Grammar,
+    name_to_tag: &HashMap<&str, u32>,
+) -> witchcraft_runtime::Grammar {
+    use witchcraft::grammar::Grammar as Fe;
+    use witchcraft_runtime::{Grammar as Rt, GrammarVariant};
+    match g {
+        Fe::Number { lo, hi } => Rt::Number { lo: *lo, hi: *hi },
+        Fe::Bool => Rt::Bool,
+        Fe::Text { max_len } => Rt::Text { max_len: *max_len },
+        Fe::Record(fields) => Rt::Record(
+            fields
+                .iter()
+                .map(|(n, sub)| (n.clone(), convert_grammar(sub, name_to_tag)))
+                .collect(),
+        ),
+        Fe::OneOf(variants) => Rt::OneOf(
+            variants
+                .iter()
+                .map(|v| GrammarVariant {
+                    name: v.name.clone(),
+                    tag: name_to_tag
+                        .get(v.name.as_str())
+                        .copied()
+                        .unwrap_or(u32::MAX),
+                    fields: v
+                        .fields
+                        .iter()
+                        .map(|(n, sub)| (n.clone(), convert_grammar(sub, name_to_tag)))
+                        .collect(),
+                })
+                .collect(),
+        ),
+    }
 }
 
 fn declare_runtime<M: Module>(module: &mut M) -> Result<Runtime, String> {
@@ -172,6 +291,47 @@ fn declare_runtime<M: Module>(module: &mut M) -> Result<Runtime, String> {
         vec![i64p(), i64p(), i64p(), i64p()],
         vec![AbiParam::new(I8)],
     )?;
+    // value + (name ptr, len) -> value
+    let field = import("w_field", vec![i64p(), i64p(), i64p(), i64p()], value())?;
+    // value + index -> value
+    let variant_field = import("w_variant_field", vec![i64p(), i64p(), i64p()], value())?;
+    // value -> u32
+    let variant_tag = import("w_variant_tag", value(), vec![AbiParam::new(I32)])?;
+    let provenance_glyph = import("w_provenance_glyph", value(), value())?;
+    // grammar ptr, (oracle ptr,len), (model ptr,len), conf_out ptr -> value
+    let divine = import(
+        "w_divine",
+        vec![i64p(), i64p(), i64p(), i64p(), i64p(), i64p()],
+        value(),
+    )?;
+    // inner value, confidence (f64), (oracle ptr,len), (model ptr,len) -> value
+    let make_inferred = import(
+        "w_make_inferred",
+        vec![
+            i64p(),
+            i64p(),
+            AbiParam::new(F64),
+            i64p(),
+            i64p(),
+            i64p(),
+            i64p(),
+        ],
+        value(),
+    )?;
+    let builder_new = import("w_builder_new", vec![], vec![i64p()])?;
+    // builder, (name ptr,len), value
+    let builder_push = import(
+        "w_builder_push",
+        vec![i64p(), i64p(), i64p(), i64p(), i64p()],
+        vec![],
+    )?;
+    let record_finish = import("w_record_finish", vec![i64p()], value())?;
+    // builder, (name ptr,len), tag(u32) -> value
+    let variant_finish = import(
+        "w_variant_finish",
+        vec![i64p(), i64p(), i64p(), AbiParam::new(I32)],
+        value(),
+    )?;
 
     Ok(Runtime {
         glyph,
@@ -181,6 +341,16 @@ fn declare_runtime<M: Module>(module: &mut M) -> Result<Runtime, String> {
         retain,
         release,
         equals,
+        field,
+        variant_field,
+        variant_tag,
+        provenance_glyph,
+        divine,
+        make_inferred,
+        builder_new,
+        builder_push,
+        record_finish,
+        variant_finish,
     })
 }
 
@@ -208,11 +378,13 @@ fn user_signature<M: Module>(module: &M, n_params: usize) -> Signature {
     sig
 }
 
+#[allow(clippy::too_many_arguments)]
 fn gen_function<M: Module>(
     module: &mut M,
     fbctx: &mut FunctionBuilderContext,
     rt: &Runtime,
     fn_ids: &HashMap<String, FuncId>,
+    grammar_addrs: &[i64],
     func: &ir::Function,
     func_id: FuncId,
 ) -> Result<(), String> {
@@ -240,6 +412,16 @@ fn gen_function<M: Module>(
             retain: module.declare_func_in_func(rt.retain, b.func),
             release: module.declare_func_in_func(rt.release, b.func),
             equals: module.declare_func_in_func(rt.equals, b.func),
+            field: module.declare_func_in_func(rt.field, b.func),
+            variant_field: module.declare_func_in_func(rt.variant_field, b.func),
+            variant_tag: module.declare_func_in_func(rt.variant_tag, b.func),
+            provenance_glyph: module.declare_func_in_func(rt.provenance_glyph, b.func),
+            divine: module.declare_func_in_func(rt.divine, b.func),
+            make_inferred: module.declare_func_in_func(rt.make_inferred, b.func),
+            builder_new: module.declare_func_in_func(rt.builder_new, b.func),
+            builder_push: module.declare_func_in_func(rt.builder_push, b.func),
+            record_finish: module.declare_func_in_func(rt.record_finish, b.func),
+            variant_finish: module.declare_func_in_func(rt.variant_finish, b.func),
         };
         let mut user_refs: HashMap<String, _> = HashMap::new();
         for (name, id) in fn_ids {
@@ -252,6 +434,7 @@ fn gen_function<M: Module>(
                 b: &mut b,
                 refs,
                 user_refs,
+                grammar_addrs,
                 locals,
                 tmps: HashMap::new(),
             };
@@ -290,6 +473,16 @@ struct Refs {
     retain: cranelift_codegen::ir::FuncRef,
     release: cranelift_codegen::ir::FuncRef,
     equals: cranelift_codegen::ir::FuncRef,
+    field: cranelift_codegen::ir::FuncRef,
+    variant_field: cranelift_codegen::ir::FuncRef,
+    variant_tag: cranelift_codegen::ir::FuncRef,
+    provenance_glyph: cranelift_codegen::ir::FuncRef,
+    divine: cranelift_codegen::ir::FuncRef,
+    make_inferred: cranelift_codegen::ir::FuncRef,
+    builder_new: cranelift_codegen::ir::FuncRef,
+    builder_push: cranelift_codegen::ir::FuncRef,
+    record_finish: cranelift_codegen::ir::FuncRef,
+    variant_finish: cranelift_codegen::ir::FuncRef,
 }
 
 struct Gen<'a, 'b, M: Module> {
@@ -297,6 +490,8 @@ struct Gen<'a, 'b, M: Module> {
     b: &'a mut FunctionBuilder<'b>,
     refs: Refs,
     user_refs: HashMap<String, cranelift_codegen::ir::FuncRef>,
+    /// `GrammarId` -> the leaked runtime-grammar address embedded for `divine`.
+    grammar_addrs: &'a [i64],
     /// Local slot -> its `(tag, bits)` Cranelift variables.
     locals: Vec<(Variable, Variable)>,
     /// IR temporary -> its `(tag, bits)` Cranelift values.
@@ -400,7 +595,7 @@ impl<M: Module> Gen<'_, '_, M> {
                 self.b.def_var(vbits, bits);
             }
             Instr::Glyph { dst, text } => {
-                let (ptr, len) = self.glyph_literal(text)?;
+                let (ptr, len) = self.str_data(text)?;
                 let v = self.call_value(self.refs.glyph, &[ptr, len]);
                 self.tmps.insert(*dst, v);
             }
@@ -445,27 +640,134 @@ impl<M: Module> Gen<'_, '_, M> {
                 self.b.ins().call(self.refs.print, &[tag, bits]);
                 self.release_operand(val);
             }
-            // Records, variants, and inference land in group 4.
-            Instr::MakeRecord { .. }
-            | Instr::MakeVariant { .. }
-            | Instr::Field { .. }
-            | Instr::VariantField { .. }
-            | Instr::VariantTag { .. }
-            | Instr::Decode { .. }
-            | Instr::MakeInferred { .. } => {
-                return Err(format!(
-                    "{} is not supported by the backend yet (group 4)",
-                    instr_name(instr)
+            Instr::Field { dst, recv, field } => {
+                let (rtag, rbits) = self.operand(recv);
+                let (nptr, nlen) = self.str_data(field)?;
+                let v = self.call_value(self.refs.field, &[rtag, rbits, nptr, nlen]);
+                // The receiver temporary is consumed by this read.
+                self.release_operand(recv);
+                self.tmps.insert(*dst, v);
+            }
+            Instr::VariantField { dst, recv, index } => {
+                let (rtag, rbits) = self.operand(recv);
+                let idx = self.b.ins().iconst(I64, *index as i64);
+                let v = self.call_value(self.refs.variant_field, &[rtag, rbits, idx]);
+                // The receiver is reused across arms; it is released by enact's owner.
+                self.tmps.insert(*dst, v);
+            }
+            Instr::VariantTag { dst, recv } => {
+                let (rtag, rbits) = self.operand(recv);
+                let call = self.b.ins().call(self.refs.variant_tag, &[rtag, rbits]);
+                let tag32 = self.b.inst_results(call)[0];
+                let tag64 = self.b.ins().uextend(I64, tag32);
+                // Only the integer (bits) is read by the Switch; the tag slot is unused.
+                let zero = self.b.ins().iconst(I64, 0);
+                self.tmps.insert(*dst, (zero, tag64));
+            }
+            Instr::ProvenanceGlyph { dst, recv } => {
+                let (rtag, rbits) = self.operand(recv);
+                let v = self.call_value(self.refs.provenance_glyph, &[rtag, rbits]);
+                self.tmps.insert(*dst, v);
+            }
+            Instr::Decode {
+                dst_val,
+                dst_conf,
+                grammar,
+                oracle,
+                model,
+                inputs,
+            } => {
+                // Inputs are evaluated for effect (the mock decoder is content-free).
+                for inp in inputs {
+                    self.release_operand(inp);
+                }
+                let gaddr = self.grammar_addrs[*grammar as usize];
+                let gptr = self.b.ins().iconst(I64, gaddr);
+                let (optr, olen) = self.str_data(oracle)?;
+                let (mptr, mlen) = self.str_data(model)?;
+                // Stack slot to receive the confidence (an out-parameter).
+                let slot = self.b.create_sized_stack_slot(StackSlotData::new(
+                    StackSlotKind::ExplicitSlot,
+                    8,
+                    3,
                 ));
+                let conf_ptr = self.b.ins().stack_addr(I64, slot, 0);
+                let val =
+                    self.call_value(self.refs.divine, &[gptr, optr, olen, mptr, mlen, conf_ptr]);
+                let conf_f = self.b.ins().stack_load(F64, slot, 0);
+                let conf_val = self.spark_from_f64(conf_f);
+                self.tmps.insert(*dst_val, val);
+                self.tmps.insert(*dst_conf, conf_val);
+            }
+            Instr::MakeInferred {
+                dst,
+                val,
+                conf,
+                oracle,
+                model,
+            } => {
+                let (vtag, vbits) = self.operand(val);
+                let conf_f = self.f64_of(conf);
+                let (optr, olen) = self.str_data(oracle)?;
+                let (mptr, mlen) = self.str_data(model)?;
+                let call = self.b.ins().call(
+                    self.refs.make_inferred,
+                    &[vtag, vbits, conf_f, optr, olen, mptr, mlen],
+                );
+                let res = self.b.inst_results(call);
+                self.tmps.insert(*dst, (res[0], res[1]));
+            }
+            Instr::MakeRecord { dst, fields } => {
+                let v = self.build_aggregate(fields, None)?;
+                self.tmps.insert(*dst, v);
+            }
+            Instr::MakeVariant {
+                dst,
+                name,
+                tag,
+                fields,
+            } => {
+                let v = self.build_aggregate(fields, Some((name, *tag)))?;
+                self.tmps.insert(*dst, v);
             }
         }
         Ok(())
     }
 
+    /// Build a record (when `variant` is `None`) or variant via the runtime
+    /// builder, transferring each field value into the builder.
+    fn build_aggregate(
+        &mut self,
+        fields: &[(String, Operand)],
+        variant: Option<(&str, u32)>,
+    ) -> Result<(CValue, CValue), String> {
+        let call = self.b.ins().call(self.refs.builder_new, &[]);
+        let builder = self.b.inst_results(call)[0];
+        for (fname, fop) in fields {
+            let (vtag, vbits) = self.operand(fop);
+            let (nptr, nlen) = self.str_data(fname)?;
+            self.b
+                .ins()
+                .call(self.refs.builder_push, &[builder, nptr, nlen, vtag, vbits]);
+        }
+        let result = match variant {
+            None => self.b.ins().call(self.refs.record_finish, &[builder]),
+            Some((name, tag)) => {
+                let (nptr, nlen) = self.str_data(name)?;
+                let tagc = self.b.ins().iconst(I32, tag as i64);
+                self.b
+                    .ins()
+                    .call(self.refs.variant_finish, &[builder, nptr, nlen, tagc])
+            }
+        };
+        let res = self.b.inst_results(result);
+        Ok((res[0], res[1]))
+    }
+
     fn concat(&mut self, parts: &[Operand]) -> (CValue, CValue) {
         if parts.is_empty() {
             // An empty glyph.
-            let (ptr, len) = self.glyph_literal("").expect("empty glyph literal");
+            let (ptr, len) = self.str_data("").expect("empty glyph literal");
             return self.call_value(self.refs.glyph, &[ptr, len]);
         }
         let mut acc = self.operand(&parts[0]);
@@ -587,8 +889,13 @@ impl<M: Module> Gen<'_, '_, M> {
                 }
                 self.b.ins().return_(&[ret.0, ret.1]);
             }
-            Terminator::Switch { .. } => {
-                return Err("enact dispatch is not supported by the backend yet (group 4)".into());
+            Terminator::Switch { tag, arms, default } => {
+                let (_, scrutinee) = self.operand(tag);
+                let mut switch = Switch::new();
+                for (tag_id, blk) in arms {
+                    switch.set_entry(*tag_id as u128, cl_blocks[*blk as usize]);
+                }
+                switch.emit(self.b, scrutinee, cl_blocks[*default as usize]);
             }
             Terminator::Unreachable => {
                 // Statically dead (e.g. an exhaustive enact default). Return unit.
@@ -599,9 +906,9 @@ impl<M: Module> Gen<'_, '_, M> {
         Ok(())
     }
 
-    /// Define a read-only data object for a glyph literal and return
-    /// `(pointer, len)` Cranelift values for a `w_glyph` call.
-    fn glyph_literal(&mut self, text: &str) -> Result<(CValue, CValue), String> {
+    /// Define a read-only data object for a string (glyph literal, field name,
+    /// oracle/model id) and return `(pointer, len)` Cranelift values.
+    fn str_data(&mut self, text: &str) -> Result<(CValue, CValue), String> {
         let name = format!("glyph_{}", next_data_id());
         let data_id = self
             .module
@@ -620,19 +927,6 @@ impl<M: Module> Gen<'_, '_, M> {
         };
         let len = self.b.ins().iconst(I64, text.len() as i64);
         Ok((ptr, len))
-    }
-}
-
-fn instr_name(instr: &Instr) -> &'static str {
-    match instr {
-        Instr::MakeRecord { .. } => "record construction",
-        Instr::MakeVariant { .. } => "variant construction",
-        Instr::Field { .. } => "field access",
-        Instr::VariantField { .. } => "variant field access",
-        Instr::VariantTag { .. } => "variant tag",
-        Instr::Decode { .. } => "divine",
-        Instr::MakeInferred { .. } => "inferred value",
-        _ => "this instruction",
     }
 }
 

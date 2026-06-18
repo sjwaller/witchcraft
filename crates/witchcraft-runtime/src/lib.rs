@@ -14,12 +14,16 @@
 //! model so the compiled and interpreted paths agree (design D6).
 
 pub mod abi;
+pub mod decode;
 pub mod heap;
 pub mod sink;
 pub mod value;
 
+pub use decode::{Grammar, GrammarVariant};
 pub use heap::{live_objects, release, retain};
-pub use sink::{begin_capture, end_capture, seed, set_seed};
+pub use sink::{
+    begin_capture, end_capture, force_confidence, seed, set_force_confidence, set_seed,
+};
 pub use value::{
     boolean, concat, display, equals, field, glyph, glyph_to_string, inferred, inferred_confidence,
     inferred_inner, provenance, record, render, spark, unit, variant, variant_field, variant_tag,

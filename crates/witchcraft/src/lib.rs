@@ -42,7 +42,13 @@ pub fn run_source(src: &str, config: RunConfig) -> Result<String, Vec<Diagnostic
 /// Parse, type-check, then lower a program to the backend IR. The IR is the
 /// target the code generator consumes (see [`ir`] and [`lower`]).
 pub fn lower_source(src: &str) -> Result<ir::Program, Vec<Diagnostic>> {
+    lower_source_weaken(src, false)
+}
+
+/// Like [`lower_source`], but optionally weakens every `divine` output type to
+/// free text (the compiled litmus knob — see [`lower::lower_program_weaken`]).
+pub fn lower_source_weaken(src: &str, weaken: bool) -> Result<ir::Program, Vec<Diagnostic>> {
     let program = parser::parse(src).map_err(|d| vec![d])?;
     typeck::check_program(&program)?;
-    lower::lower_program(&program).map_err(|d| vec![d])
+    lower::lower_program_weaken(&program, weaken).map_err(|d| vec![d])
 }

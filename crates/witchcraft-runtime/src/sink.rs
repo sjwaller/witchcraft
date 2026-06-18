@@ -11,6 +11,7 @@ use std::cell::{Cell, RefCell};
 thread_local! {
     static CAPTURE: RefCell<Option<String>> = const { RefCell::new(None) };
     static SEED: Cell<u64> = const { Cell::new(0) };
+    static FORCE_CONFIDENCE: Cell<Option<f64>> = const { Cell::new(None) };
 }
 
 /// Start capturing `print` output into a buffer instead of stdout.
@@ -38,12 +39,25 @@ pub fn emit_line(s: &str) {
     });
 }
 
-/// Set the inference seed used by the decoder for this run.
+/// Set the inference seed for this run: records it (for provenance) and reseeds
+/// the shared decoder RNG.
 pub fn set_seed(seed: u64) {
     SEED.with(|c| c.set(seed));
+    crate::decode::reset(seed);
 }
 
 /// The current inference seed.
 pub fn seed() -> u64 {
     SEED.with(|c| c.get())
+}
+
+/// Fault-injection knob: force every discharge to see this confidence. Mirrors
+/// the interpreter's `RunConfig::force_confidence`.
+pub fn set_force_confidence(value: Option<f64>) {
+    FORCE_CONFIDENCE.with(|c| c.set(value));
+}
+
+/// The forced confidence, if any.
+pub fn force_confidence() -> Option<f64> {
+    FORCE_CONFIDENCE.with(|c| c.get())
 }

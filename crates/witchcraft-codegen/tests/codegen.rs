@@ -3,30 +3,36 @@
 //! (the D6 equivalence requirement), and loop-local heap values must be
 //! reclaimed during execution (group 2.3/2.4 in compiled form).
 
-use witchcraft::{lower_source, run_source, RunConfig};
-use witchcraft_codegen::{run, run_capture};
+use witchcraft::{lower_source, lower_source_weaken, run_source, RunConfig};
+use witchcraft_codegen::{run, run_capture, run_capture_with, RunOptions};
 
 /// Compile + run, returning captured stdout.
 fn compiled(src: &str, seed: u64) -> String {
-    let ir = lower_source(src).unwrap_or_else(|ds| {
+    run_capture(&lower(src), seed).expect("compiled run")
+}
+
+fn lower(src: &str) -> witchcraft::ir::Program {
+    lower_source(src).unwrap_or_else(|ds| {
         panic!(
             "lowering failed: {}",
             ds.iter().map(|d| d.render()).collect::<Vec<_>>().join("; ")
         )
-    });
-    run_capture(&ir, seed).expect("compiled run")
+    })
 }
 
 /// Interpret, returning stdout.
 fn interpreted(src: &str, seed: u64) -> String {
-    run_source(
+    interpreted_with(
         src,
         RunConfig {
             seed,
             ..Default::default()
         },
     )
-    .unwrap_or_else(|ds| {
+}
+
+fn interpreted_with(src: &str, config: RunConfig) -> String {
+    run_source(src, config).unwrap_or_else(|ds| {
         panic!(
             "interpret failed: {}",
             ds.iter().map(|d| d.render()).collect::<Vec<_>>().join("; ")
@@ -77,6 +83,135 @@ fn host_example_runs_to_stdout_without_capture() {
     let src = include_str!("../../../examples/host.witch");
     let ir = lower_source(src).expect("lower");
     run(&ir, 0).expect("run");
+}
+
+// ---------- group 4: divine / oracle / enact in compiled form ----------
+
+const ACTION_TYPES: &str = "\
+type Action = one_of {
+    Draft(reply: glyph),
+    Escalate,
+    AskClarify(question: glyph),
+}
+type Disposition = { urgency: spark in 0..10, action: Action }
+";
+
+#[test]
+fn triage_example_compiles_to_the_interpreter_golden() {
+    // The §6.3 worked example: divine an inferred Disposition, discharge it, and
+    // enact over the variants — with provenance threaded into the Draft arm. The
+    // compiled artifact must reproduce the interpreter's deterministic golden.
+    let src = include_str!("../../../examples/triage.witch");
+    let expected = "\
+urgency: 8
+drafted reply: fcrlysheyyil
+provenance: oracle=triage model=mock-triage-v1 seed=1
+";
+    assert_eq!(compiled(src, 1), expected);
+    assert_eq!(compiled(src, 1), interpreted(src, 1));
+}
+
+#[test]
+fn divine_field_access_matches_interpreter() {
+    let src = format!(
+        "{ACTION_TYPES}
+oracle o = summon \"m\"
+divine d: Disposition from (\"t\") using o with confidence >= 0.0 fallback \"f\"
+print d.urgency
+"
+    );
+    for seed in [0u64, 1, 7, 42] {
+        assert_eq!(compiled(&src, seed), interpreted(&src, seed), "seed {seed}");
+    }
+}
+
+#[test]
+fn compiled_litmus_deleting_the_type_changes_generation() {
+    // Same program + seed; once with the output type in force, once with it
+    // structurally removed (weakened to free text). The compiled artifacts must
+    // differ — the type is part of the computation, not documentation (§6.3).
+    let src = "\
+type Rating = spark in 0..5
+oracle o = summon \"m\"
+divine r: Rating from (\"x\") using o with confidence >= 0.0 fallback 0
+print r
+";
+    let typed = run_capture(&lower(src), 3).expect("typed run");
+    let untyped =
+        run_capture(&lower_source_weaken(src, true).expect("weaken lower"), 3).expect("weak run");
+    assert_ne!(
+        typed, untyped,
+        "deleting the type must change generation (litmus)"
+    );
+    let n: i64 = typed.trim().parse().expect("typed output is a spark");
+    assert!((0..=5).contains(&n), "constrained output {n} out of range");
+}
+
+#[test]
+fn compiled_fault_injection_keeps_low_confidence_out_of_enact() {
+    // Forcing the discharge to see low confidence fires the fallback and unwinds,
+    // so no enact arm and no trailing statement run — the §6.2 guarantee, in
+    // compiled form. Forcing high confidence completes the run.
+    let src = format!(
+        "{ACTION_TYPES}
+oracle o = summon \"m\"
+print \"start\"
+divine d: Disposition from (\"t\") using o with confidence >= 0.8 fallback \"fb\"
+enact d.action {{
+    Draft(reply) => {{ print \"drafted\" }}
+    Escalate => {{ print \"escalated\" }}
+    AskClarify(question) => {{ print \"asked\" }}
+}}
+print \"end\"
+"
+    );
+    let ir = lower(&src);
+
+    let injected = run_capture_with(
+        &ir,
+        RunOptions {
+            seed: 1,
+            force_confidence: Some(0.0),
+        },
+    )
+    .expect("injected run");
+    assert_eq!(injected, "start\n");
+    assert!(!injected.contains("drafted"));
+    assert!(!injected.contains("escalated"));
+
+    let healthy = run_capture_with(
+        &ir,
+        RunOptions {
+            seed: 1,
+            force_confidence: Some(1.0),
+        },
+    )
+    .expect("healthy run");
+    assert!(healthy.contains("end"));
+
+    // And both match the interpreter under the same fault injection.
+    assert_eq!(
+        injected,
+        interpreted_with(
+            &src,
+            RunConfig {
+                seed: 1,
+                force_confidence: Some(0.0),
+                ..Default::default()
+            }
+        )
+    );
+    assert_eq!(
+        healthy,
+        interpreted_with(
+            &src,
+            RunConfig {
+                seed: 1,
+                force_confidence: Some(1.0),
+                ..Default::default()
+            }
+        )
+    );
 }
 
 #[test]

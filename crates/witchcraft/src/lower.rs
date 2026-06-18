@@ -16,6 +16,16 @@ use crate::typeck::{build_type_table, resolve_type};
 use crate::types::Type;
 
 pub fn lower_program(prog: &Program) -> Result<crate::ir::Program, Diagnostic> {
+    lower_program_weaken(prog, false)
+}
+
+/// Lower a program, optionally **weakening** every `divine` output type to free
+/// text (as if the type were deleted). This is the compiled litmus knob: building
+/// the same program weakened vs not, under one seed, must change generation.
+pub fn lower_program_weaken(
+    prog: &Program,
+    weaken: bool,
+) -> Result<crate::ir::Program, Diagnostic> {
     let types = build_type_table(prog);
     let mut ctx = LowerCtx {
         types,
@@ -23,6 +33,7 @@ pub fn lower_program(prog: &Program) -> Result<crate::ir::Program, Diagnostic> {
         grammars: Vec::new(),
         variant_names: Vec::new(),
         functions: Vec::new(),
+        weaken,
     };
 
     // Oracles are resolved statically (declared, referenced by name in `divine`).
@@ -97,6 +108,7 @@ struct LowerCtx {
     grammars: Vec<Grammar>,
     variant_names: Vec<String>,
     functions: Vec<Function>,
+    weaken: bool,
 }
 
 impl LowerCtx {
@@ -248,7 +260,7 @@ impl LowerCtx {
     fn lower_divine(&mut self, fb: &mut FnBuilder, d: &DivineStmt) -> Result<(), Diagnostic> {
         let out_ty = resolve_type(&d.out_ty, &self.types)
             .map_err(|e| Diagnostic::type_error(e.message, d.span))?;
-        let g = grammar::compile(&out_ty, false, d.span)?;
+        let g = grammar::compile(&out_ty, self.weaken, d.span)?;
         let gid = self.add_grammar(g);
         let model = self
             .oracles
@@ -377,6 +389,18 @@ impl LowerCtx {
                     src: Operand::Tmp(dst),
                 });
             }
+            // Thread provenance into the arm, matching the interpreter, so an arm
+            // body may reference `provenance`.
+            let prov_dst = fb.fresh_tmp();
+            fb.emit(Instr::ProvenanceGlyph {
+                dst: prov_dst,
+                recv: subj.clone(),
+            });
+            let prov_local = fb.declare_local("provenance");
+            fb.emit(Instr::StoreLocal {
+                local: prov_local,
+                src: Operand::Tmp(prov_dst),
+            });
             for s in &arm.body {
                 self.lower_stmt(fb, s)?;
             }
