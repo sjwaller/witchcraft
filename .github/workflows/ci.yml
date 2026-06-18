@@ -22,3 +22,20 @@ jobs:
         run: cargo build --all
       - name: Test
         run: cargo test --all
+      - name: Compile and run example executables (ship path)
+        run: |
+          set -euo pipefail
+          cargo build -p grimoire
+          GRIMOIRE=target/debug/grimoire
+          "$GRIMOIRE" --version
+          # Build each example to a self-contained native executable and run it,
+          # asserting the compiled output matches `witch run` for a fixed seed.
+          for example in host triage; do
+            "$GRIMOIRE" build "examples/$example.witch" -o "/tmp/$example"
+            compiled="$("/tmp/$example" --seed 1)"
+            interpreted="$(target/debug/witch run "examples/$example.witch" --seed 1)"
+            if [ "$compiled" != "$interpreted" ]; then
+              echo "compiled vs interpreted mismatch for $example"; exit 1
+            fi
+            echo "$example: compiled == interpreted"
+          done

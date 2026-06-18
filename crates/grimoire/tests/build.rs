@@ -1,0 +1,166 @@
+//! End-to-end tests for the ship path (group 5/6): `grimoire build` produces a
+//! self-contained native executable whose output matches the interpreter for the
+//! same program and seed (the D6 equivalence), and ill-typed programs are refused
+//! with no artifact.
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use witchcraft::{run_source, RunConfig};
+
+const GRIMOIRE: &str = env!("CARGO_BIN_EXE_grimoire");
+
+fn examples_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples")
+}
+
+fn unique_path(name: &str) -> PathBuf {
+    static N: AtomicU64 = AtomicU64::new(0);
+    std::env::temp_dir().join(format!(
+        "grimoire-test-{}-{}-{}",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed),
+        name
+    ))
+}
+
+/// Build `source_path` to a native executable; panics with the linker/diagnostic
+/// output on failure.
+fn build(source_path: &Path, out: &Path) {
+    let output = Command::new(GRIMOIRE)
+        .arg("build")
+        .arg(source_path)
+        .arg("-o")
+        .arg(out)
+        .output()
+        .expect("run grimoire build");
+    assert!(
+        output.status.success(),
+        "grimoire build failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// Run a built executable under `seed`, returning its stdout.
+fn run_exe(exe: &Path, seed: u64) -> String {
+    let output = Command::new(exe)
+        .arg("--seed")
+        .arg(seed.to_string())
+        .output()
+        .expect("run compiled executable");
+    assert!(
+        output.status.success(),
+        "compiled executable exited non-zero"
+    );
+    String::from_utf8(output.stdout).expect("utf-8 stdout")
+}
+
+fn interpret(source_path: &Path, seed: u64) -> String {
+    let src = std::fs::read_to_string(source_path).expect("read source");
+    run_source(
+        &src,
+        RunConfig {
+            seed,
+            ..Default::default()
+        },
+    )
+    .expect("interpret")
+}
+
+fn assert_compiled_equals_interpreted(example: &str, seeds: &[u64]) {
+    let src = examples_dir().join(example);
+    let exe = unique_path(&format!("{example}.exe").replace('/', "_"));
+    build(&src, &exe);
+    for &seed in seeds {
+        assert_eq!(
+            run_exe(&exe, seed),
+            interpret(&src, seed),
+            "compiled vs interpreted differ for {example} at seed {seed}"
+        );
+    }
+    let _ = std::fs::remove_file(&exe);
+}
+
+#[test]
+fn host_example_executable_matches_interpreter() {
+    assert_compiled_equals_interpreted("host.witch", &[0, 1, 42]);
+}
+
+#[test]
+fn triage_example_executable_matches_interpreter() {
+    // The §6.3 worked example, AOT-compiled and run as a bare native binary,
+    // reproduces the interpreter's inference + provenance for each seed.
+    assert_compiled_equals_interpreted("triage.witch", &[1, 7, 42]);
+}
+
+#[test]
+fn triage_executable_is_self_contained_and_deterministic() {
+    let src = examples_dir().join("triage.witch");
+    let exe = unique_path("triage-golden.exe");
+    build(&src, &exe);
+    let expected = "\
+urgency: 8
+drafted reply: fcrlysheyyil
+provenance: oracle=triage model=mock-triage-v1 seed=1
+";
+    assert_eq!(run_exe(&exe, 1), expected);
+    let _ = std::fs::remove_file(&exe);
+}
+
+#[test]
+fn ill_typed_program_is_refused_with_no_artifact() {
+    let src = unique_path("nonexhaustive.witch");
+    std::fs::write(
+        &src,
+        "\
+type Action = one_of { Draft(reply: glyph), Escalate }
+type Disposition = { urgency: spark in 0..10, action: Action }
+oracle o = summon \"m\"
+divine d: Disposition from (\"t\") using o with confidence >= 0.0 fallback \"f\"
+enact d.action {
+    Draft(reply) => {}
+}
+",
+    )
+    .expect("write source");
+    let out = unique_path("nonexhaustive.exe");
+    let _ = std::fs::remove_file(&out);
+
+    let output = Command::new(GRIMOIRE)
+        .arg("build")
+        .arg(&src)
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .expect("run grimoire build");
+
+    assert!(
+        !output.status.success(),
+        "ill-typed program must not build successfully"
+    );
+    assert!(
+        !out.exists(),
+        "no artifact must be produced for an ill-typed program"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("non-exhaustive"),
+        "expected a type diagnostic, got: {stderr}"
+    );
+    let _ = std::fs::remove_file(&src);
+}
+
+#[test]
+fn version_reports_name_and_target() {
+    let output = Command::new(GRIMOIRE)
+        .arg("--version")
+        .output()
+        .expect("run grimoire --version");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("grimoire"), "version: {stdout}");
+    assert!(
+        stdout.contains('('),
+        "version should include target: {stdout}"
+    );
+}

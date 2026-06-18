@@ -32,16 +32,18 @@
 
 ## 5. Linking and `grimoire build`
 
-- [ ] 5.1 Add the `grimoire` binary (or `witch build`) with `build <file> -o <out>` (typecheck → lower → codegen → link)
-- [ ] 5.2 Bundle a linker (`lld`) and link the object + runtime into a single self-contained executable; system-linker fallback
-- [ ] 5.3 `grimoire --version` reporting version + target triple (consistent with `witch`)
-- [ ] 5.4 Refuse to build ill-typed programs (no artifact, non-zero exit, structural-only success wording)
+- [x] 5.1 Add the `grimoire` binary (or `witch build`) with `build <file> -o <out>` (typecheck → lower → codegen → link) <!-- new `grimoire` crate: `grimoire build <file> [-o out]` runs check → lower → `compile_object` (cranelift-object, with a C `main` entry parsing `--seed`) → link; also `grimoire check` and `grimoire --version` -->
+- [~] 5.2 Bundle a linker (`lld`) and link the object + runtime into a single self-contained executable; system-linker fallback <!-- the object + runtime link into one self-contained native executable (verified Mach-O arm64; runs with no Rust/source). The runtime is embedded in `grimoire` (build.rs compiles a fresh dependency-free `staticlib` via rustc, no nested cargo) so the toolchain carries its own runtime. Linking currently drives the system `cc`; *bundling* `lld` to drop the system-linker requirement is a distribution refinement tracked for `add-distribution` -->
+- [x] 5.3 `grimoire --version` reporting version + target triple (consistent with `witch`) <!-- `grimoire <version> (<target triple>)`, target captured in build.rs like `witch` -->
+- [x] 5.4 Refuse to build ill-typed programs (no artifact, non-zero exit, structural-only success wording) <!-- `build` type-checks first; on diagnostics it prints them, exits non-zero, and writes no artifact (test: `ill_typed_program_is_refused_with_no_artifact`). Success wording keeps the structural-not-semantic caveat -->
+
+> Note on macOS: cranelift-object emits a Mach-O object without a platform load command, which `ld` rejects (`unknown platform`); `compile_object` sets a `MachOBuildVersion` (PLATFORM_MACOS) before emit.
 
 ## 6. Equivalence and validation
 
-- [ ] 6.1 Conformance harness: for each example, assert `witch run --seed N` output == compiled-executable output for seed N
-- [~] 6.2 Compiled litmus test: build with output type present vs structurally removed under one seed → outputs differ <!-- proven on the compiled (JIT) path: `compiled_litmus_deleting_the_type_changes_generation`. Re-assert via the built executable in group 5/6 -->
-- [~] 6.3 Compiled fault-injection test: forced low confidence takes `fallback`, value does not flow downstream <!-- proven on the compiled (JIT) path: `compiled_fault_injection_keeps_low_confidence_out_of_enact`, matched against the interpreter. Re-assert via the built executable in group 5/6 -->
-- [ ] 6.4 Build the host + triage examples as executables in CI and run them; wire into the build/test workflow
-- [ ] 6.5 Run `openspec validate add-grimoire-codegen --strict` and confirm every spec scenario is covered by a test
-- [ ] 6.6 Update README: `grimoire build` usage, the dev-loop vs ship-path split, and the structural-not-semantic caveat (§8)
+- [x] 6.1 Conformance harness: for each example, assert `witch run --seed N` output == compiled-executable output for seed N <!-- `grimoire` tests build host.witch + triage.witch to native executables and compare their stdout to the interpreter across seeds (`*_executable_matches_interpreter`) -->
+- [x] 6.2 Compiled litmus test: build with output type present vs structurally removed under one seed → outputs differ <!-- `compiled_litmus_deleting_the_type_changes_generation`. Object and JIT share one `build()`; the grammar is serialised into the artifact, so a built executable carries the type as a generation constraint -->
+- [x] 6.3 Compiled fault-injection test: forced low confidence takes `fallback`, value does not flow downstream <!-- `compiled_fault_injection_keeps_low_confidence_out_of_enact`, matched against the interpreter -->
+- [x] 6.4 Build the host + triage examples as executables in CI and run them; wire into the build/test workflow <!-- the `grimoire` integration tests build + run both example executables; CI runs `cargo test --workspace` and a dedicated `grimoire build`/run smoke step -->
+- [x] 6.5 Run `openspec validate add-grimoire-codegen --strict` and confirm every spec scenario is covered by a test <!-- `openspec validate add-grimoire-codegen --strict` → valid; spec scenarios map to tests in lower.rs, codegen.rs, and grimoire/tests/build.rs -->
+- [x] 6.6 Update README: `grimoire build` usage, the dev-loop vs ship-path split, and the structural-not-semantic caveat (§8)

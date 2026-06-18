@@ -5,6 +5,7 @@ members = [
     "crates/witchcraft-runtime",
     "crates/witchcraft-codegen",
     "crates/witch",
+    "crates/grimoire",
 ]
 
 [workspace.package]

@@ -1,0 +1,21 @@
+[package]
+name = "grimoire"
+description = "The `grimoire` CLI: compile Witchcraft (.witch) programs to self-contained native executables."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "grimoire"
+path = "src/main.rs"
+
+[dependencies]
+witchcraft = { path = "../witchcraft" }
+witchcraft-codegen = { path = "../witchcraft-codegen" }
+
+# The runtime is linked into every artifact `grimoire build` produces. We depend
+# on it so cargo builds its staticlib (`libwitchcraft_runtime.a`) before our
+# build script, which embeds it into the `grimoire` binary (see build.rs) — so a
+# shipped `grimoire` carries its own runtime, no Rust required at build time.
+witchcraft-runtime = { path = "../witchcraft-runtime" }

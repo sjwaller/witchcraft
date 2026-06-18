@@ -5,7 +5,7 @@
 //!
 //! `Value` is `#[repr(C)]` and 16 bytes, passed and returned by value.
 
-use crate::decode::{self, Grammar};
+use crate::decode;
 use crate::heap::{release, retain};
 use crate::value::{self, Provenance, Value};
 
@@ -103,25 +103,28 @@ pub extern "C" fn w_provenance_glyph(v: Value) -> Value {
     value::provenance_glyph(v)
 }
 
-/// The inference primitive. Decodes a value constrained by the embedded
-/// `grammar`, applies fault-injection (forced confidence) if active, attaches
-/// provenance (oracle, model, seed), writes the confidence to `conf_out`, and
-/// returns the value. Inference happens here, at run time — never at build time.
+/// The inference primitive. Reconstructs the grammar embedded at this `divine`
+/// site (serialised into the artifact), decodes a value the grammar admits,
+/// applies fault-injection (forced confidence) if active, attaches provenance
+/// (oracle, model, seed), writes the confidence to `conf_out`, and returns the
+/// value. Inference happens here, at run time — never at build time.
 ///
 /// # Safety
-/// `grammar` must point to a live [`Grammar`]; the name pointers must be valid
-/// UTF-8; `conf_out` must be a valid, writable `f64`.
+/// `grammar_ptr`/`grammar_len` must describe valid grammar bytes produced by
+/// [`decode::encode`]; the name pointers must be valid UTF-8; `conf_out` must be
+/// a valid, writable `f64`.
 #[no_mangle]
 pub unsafe extern "C" fn w_divine(
-    grammar: *const Grammar,
+    grammar_ptr: *const u8,
+    grammar_len: usize,
     oracle_ptr: *const u8,
     oracle_len: usize,
     model_ptr: *const u8,
     model_len: usize,
     conf_out: *mut f64,
 ) -> Value {
-    let grammar = &*grammar;
-    let (value, decoded_conf) = decode::decode(grammar);
+    let grammar = decode::decode_grammar(std::slice::from_raw_parts(grammar_ptr, grammar_len));
+    let (value, decoded_conf) = decode::decode(&grammar);
     let confidence = crate::sink::force_confidence().unwrap_or(decoded_conf);
     let prov = Provenance {
         oracle: str_arg(oracle_ptr, oracle_len).to_string(),
@@ -211,4 +214,43 @@ pub unsafe extern "C" fn w_variant_finish(
 /// `ptr`/`len` must describe valid, initialised UTF-8 bytes.
 unsafe fn str_arg<'a>(ptr: *const u8, len: usize) -> &'a str {
     std::str::from_utf8(std::slice::from_raw_parts(ptr, len)).expect("invalid UTF-8 argument")
+}
+
+// ---------- program entry (compiled executables) ----------
+
+/// Set the run seed (records it for provenance and reseeds the decoder). Called
+/// by a compiled executable's entry point before `witch_main`.
+#[no_mangle]
+pub extern "C" fn w_set_seed(seed: u64) {
+    crate::sink::set_seed(seed);
+}
+
+/// Parse `--seed <n>` out of a C `argv`, returning the seed (0 if absent or
+/// malformed). The compiled executable's entry point calls this so a built
+/// artifact accepts the same seed flag as `witch run`.
+///
+/// # Safety
+/// `argv` must be a valid array of `argc` C strings (the standard `main` ABI).
+#[no_mangle]
+pub unsafe extern "C" fn w_parse_seed(argc: i32, argv: *const *const std::os::raw::c_char) -> u64 {
+    if argv.is_null() {
+        return 0;
+    }
+    let n = argc.max(0) as isize;
+    let mut i = 0isize;
+    while i < n {
+        let arg = *argv.offset(i);
+        if !arg.is_null() && std::ffi::CStr::from_ptr(arg).to_bytes() == b"--seed" && i + 1 < n {
+            let val = *argv.offset(i + 1);
+            if !val.is_null() {
+                if let Ok(s) = std::ffi::CStr::from_ptr(val).to_str() {
+                    if let Ok(parsed) = s.parse::<u64>() {
+                        return parsed;
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    0
 }

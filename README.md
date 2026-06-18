@@ -94,6 +94,39 @@ witch run examples/triage.witch --seed 1
 `witch check` exits non-zero on any error and never executes code. `witch run`
 refuses to run an ill-typed program.
 
+## Compile to a native executable
+
+There are two paths, and they agree:
+
+- **`witch run`** is the **dev loop** — a tree-walking interpreter, fast to
+  iterate, no build step (the `go run` analogue).
+- **`grimoire build`** is the **ship path** — it compiles a program ahead of time
+  (Cranelift) and links it with the runtime into a **single self-contained native
+  executable** that runs with **no Rust and no `.witch` source**.
+
+```bash
+# compile a program to a native binary
+grimoire build examples/triage.witch -o triage
+
+# run it like any other executable; --seed is accepted, just like `witch run`
+./triage --seed 1
+```
+
+The compiled binary and the interpreter produce **identical** output for the same
+program and seed — this equivalence is enforced in CI. Crucially, the output type
+is compiled into the artifact as a **generation grammar** (the litmus property
+holds in compiled form): the `divine` site stays a runtime, type-constrained call
+into the bundled decoder, so inference is never pre-computed at build time.
+
+Only the *host* language is compiled ahead of time; **inference is a runtime,
+type-constrained effect** — a green compile is still structural, not semantic
+(see below). `grimoire build` refuses ill-typed programs (no artifact, non-zero
+exit).
+
+> Linking currently drives the system C compiler (`cc`) to produce the final
+> executable; the runtime itself is carried inside `grimoire`. Bundling a linker
+> (`lld`) so no system toolchain is needed at all is a distribution refinement.
+
 ## Build from source (contributors only)
 
 End users do not need this. Requires a recent Rust toolchain (`cargo`).
@@ -123,11 +156,18 @@ inference, not that the oracle was right.
 ## Layout
 
 - `crates/witchcraft/` — the language: lexer, parser, type checker, interpreter,
-  type→grammar compiler, and the constrained decoder.
-- `crates/witch/` — the `witch` CLI.
+  type→grammar compiler, the constrained decoder, and the lowering IR.
+- `crates/witchcraft-runtime/` — the compiled runtime linked into every artifact:
+  value model + reference counting, the decoder/oracle seam, provenance.
+- `crates/witchcraft-codegen/` — the Cranelift backend (lowering IR → native code,
+  JIT for tests and an object file for the ship path).
+- `crates/witch/` — the `witch` CLI (check / run — the dev loop).
+- `crates/grimoire/` — the `grimoire` CLI (build — the ship path).
 - `examples/` — runnable `.witch` programs.
 - `crates/witchcraft/tests/` — acceptance tests (litmus, fault injection,
   negative type tests, golden output).
+- `crates/grimoire/tests/` — compiled-executable equivalence tests (compiled
+  output == interpreter, ill-typed programs refused).
 - `docs/grammar.ebnf` — the formal grammar, kept in step with the parser.
 - `openspec/` — the specs and change proposals this implementation is built from.
 

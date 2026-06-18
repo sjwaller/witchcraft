@@ -19,7 +19,7 @@ pub mod heap;
 pub mod sink;
 pub mod value;
 
-pub use decode::{Grammar, GrammarVariant};
+pub use decode::{decode_grammar, encode, Grammar, GrammarVariant};
 pub use heap::{live_objects, release, retain};
 pub use sink::{
     begin_capture, end_capture, force_confidence, seed, set_force_confidence, set_seed,

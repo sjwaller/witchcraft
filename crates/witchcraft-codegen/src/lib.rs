@@ -66,6 +66,8 @@ struct Runtime {
     builder_push: FuncId,
     record_finish: FuncId,
     variant_finish: FuncId,
+    parse_seed: FuncId,
+    set_seed: FuncId,
 }
 
 /// Knobs for a compiled run, mirroring the interpreter's `RunConfig`.
@@ -150,9 +152,53 @@ fn jit_compile(prog: &ir::Program) -> Result<(JITModule, FuncId), String> {
     let mut builder = JITBuilder::with_isa(isa, default_libcall_names());
     register_runtime_symbols(&mut builder);
     let mut module = JITModule::new(builder);
-    let main_id = build(&mut module, prog)?;
+    let main_id = build(&mut module, prog, false)?;
     Ok((module, main_id))
 }
+
+/// Compile `prog` to a relocatable native **object file** with a C `main` entry
+/// point, ready to be linked (with `witchcraft-runtime`) into a self-contained
+/// executable. This is the ship path behind `grimoire build`.
+pub fn compile_object(prog: &ir::Program) -> Result<Vec<u8>, String> {
+    let mut flags = settings::builder();
+    flags
+        .set("use_colocated_libcalls", "false")
+        .map_err(|e| e.to_string())?;
+    // Position-independent code: required for PIE executables on the supported
+    // targets (notably macOS arm64).
+    flags.set("is_pic", "true").map_err(|e| e.to_string())?;
+    let isa_builder = cranelift_native::builder().map_err(|e| e.to_string())?;
+    let isa = isa_builder
+        .finish(settings::Flags::new(flags))
+        .map_err(|e| e.to_string())?;
+
+    let builder = cranelift_object::ObjectBuilder::new(
+        isa,
+        "witchcraft",
+        cranelift_module::default_libcall_names(),
+    )
+    .map_err(de)?;
+    let mut module = cranelift_object::ObjectModule::new(builder);
+    build(&mut module, prog, true)?;
+    let mut product = module.finish();
+    set_macho_platform(&mut product.object);
+    product.emit().map_err(de)
+}
+
+/// macOS `ld` rejects a Mach-O object with no platform (`unknown platform`).
+/// cranelift-object does not emit a build-version load command, so we add one.
+#[cfg(target_os = "macos")]
+fn set_macho_platform(object: &mut cranelift_object::object::write::Object) {
+    use cranelift_object::object::{macho, write::MachOBuildVersion};
+    let mut bv = MachOBuildVersion::default();
+    bv.platform = macho::PLATFORM_MACOS;
+    bv.minos = 11 << 16; // 11.0.0, packed as X.Y.Z
+    bv.sdk = 11 << 16;
+    object.set_macho_build_version(bv);
+}
+
+#[cfg(not(target_os = "macos"))]
+fn set_macho_platform(_object: &mut cranelift_object::object::write::Object) {}
 
 fn register_runtime_symbols(builder: &mut JITBuilder) {
     use witchcraft_runtime::abi::*;
@@ -173,13 +219,21 @@ fn register_runtime_symbols(builder: &mut JITBuilder) {
     builder.symbol("w_builder_push", w_builder_push as *const u8);
     builder.symbol("w_record_finish", w_record_finish as *const u8);
     builder.symbol("w_variant_finish", w_variant_finish as *const u8);
+    builder.symbol("w_parse_seed", w_parse_seed as *const u8);
+    builder.symbol("w_set_seed", w_set_seed as *const u8);
 }
 
 /// Declare the runtime functions and every Witchcraft function, then generate
-/// each body. Returns the `FuncId` of `main`. Generic over the module kind.
-fn build<M: Module>(module: &mut M, prog: &ir::Program) -> Result<FuncId, String> {
+/// each body. Returns the `FuncId` of `witch_main`. When `emit_entry` is set, a
+/// C `main` entry point is also emitted (for object/executable builds). Generic
+/// over the module kind (JIT or object).
+fn build<M: Module>(
+    module: &mut M,
+    prog: &ir::Program,
+    emit_entry: bool,
+) -> Result<FuncId, String> {
     let rt = declare_runtime(module)?;
-    let grammar_addrs = leak_grammars(prog);
+    let grammar_bytes = encode_grammars(prog);
 
     let mut fn_ids: HashMap<String, FuncId> = HashMap::new();
     for f in &prog.functions {
@@ -191,28 +245,31 @@ fn build<M: Module>(module: &mut M, prog: &ir::Program) -> Result<FuncId, String
     let mut fbctx = FunctionBuilderContext::new();
     for f in &prog.functions {
         let id = fn_ids[&f.name];
-        gen_function(module, &mut fbctx, &rt, &fn_ids, &grammar_addrs, f, id)?;
+        gen_function(module, &mut fbctx, &rt, &fn_ids, &grammar_bytes, f, id)?;
     }
     gen_function(
         module,
         &mut fbctx,
         &rt,
         &fn_ids,
-        &grammar_addrs,
+        &grammar_bytes,
         &prog.main,
         main_id,
     )?;
 
+    if emit_entry {
+        gen_entry(module, &mut fbctx, &rt, main_id)?;
+    }
+
     Ok(main_id)
 }
 
-/// Convert each `divine` site's compiled grammar to the runtime representation,
-/// leak it (one per site, process lifetime), and return its address as an `i64`
-/// constant the `Decode` codegen embeds. Variant tags use the program's interned
-/// ids so a decoded variant dispatches correctly through a compiled `enact`.
-///
-/// (Object builds will serialise these into a data section instead — see group 5.)
-fn leak_grammars(prog: &ir::Program) -> Vec<i64> {
+/// Serialise each `divine` site's compiled grammar to bytes for embedding in the
+/// artifact (data section). Variant tags use the program's interned ids so a
+/// decoded variant dispatches correctly through a compiled `enact`. The runtime
+/// reconstructs the grammar from these bytes at the call site (so a built
+/// executable carries the type as a generation constraint — the litmus property).
+fn encode_grammars(prog: &ir::Program) -> Vec<Vec<u8>> {
     let name_to_tag: HashMap<&str, u32> = prog
         .variant_names
         .iter()
@@ -221,11 +278,60 @@ fn leak_grammars(prog: &ir::Program) -> Vec<i64> {
         .collect();
     prog.grammars
         .iter()
-        .map(|g| {
-            let rt_grammar = convert_grammar(g, &name_to_tag);
-            Box::into_raw(Box::new(rt_grammar)) as i64
-        })
+        .map(|g| witchcraft_runtime::encode(&convert_grammar(g, &name_to_tag)))
         .collect()
+}
+
+/// Emit the C `main(argc, argv)` entry point: parse `--seed`, seed the runtime,
+/// run `witch_main`, release its result, and return 0.
+fn gen_entry<M: Module>(
+    module: &mut M,
+    fbctx: &mut FunctionBuilderContext,
+    rt: &Runtime,
+    main_id: FuncId,
+) -> Result<(), String> {
+    let ptr_ty = module.target_config().pointer_type();
+    let call = module.target_config().default_call_conv;
+    let mut sig = Signature::new(call);
+    sig.params.push(AbiParam::new(I32)); // argc
+    sig.params.push(AbiParam::new(ptr_ty)); // argv
+    sig.returns.push(AbiParam::new(I32)); // exit code
+    let entry_id = module
+        .declare_function("main", Linkage::Export, &sig)
+        .map_err(de)?;
+
+    let mut ctx = module.make_context();
+    ctx.func.signature = sig;
+    {
+        let mut b = FunctionBuilder::new(&mut ctx.func, fbctx);
+        let parse_seed = module.declare_func_in_func(rt.parse_seed, b.func);
+        let set_seed = module.declare_func_in_func(rt.set_seed, b.func);
+        let release = module.declare_func_in_func(rt.release, b.func);
+        let witch_main = module.declare_func_in_func(main_id, b.func);
+
+        let blk = b.create_block();
+        b.append_block_params_for_function_params(blk);
+        b.switch_to_block(blk);
+        b.seal_block(blk);
+        let argc = b.block_params(blk)[0];
+        let argv = b.block_params(blk)[1];
+
+        let seed_call = b.ins().call(parse_seed, &[argc, argv]);
+        let seed = b.inst_results(seed_call)[0];
+        b.ins().call(set_seed, &[seed]);
+
+        let main_call = b.ins().call(witch_main, &[]);
+        let res = b.inst_results(main_call);
+        let (rtag, rbits) = (res[0], res[1]);
+        b.ins().call(release, &[rtag, rbits]);
+
+        let zero = b.ins().iconst(I32, 0);
+        b.ins().return_(&[zero]);
+        b.finalize();
+    }
+    module.define_function(entry_id, &mut ctx).map_err(de)?;
+    module.clear_context(&mut ctx);
+    Ok(())
 }
 
 fn convert_grammar(
@@ -298,10 +404,10 @@ fn declare_runtime<M: Module>(module: &mut M) -> Result<Runtime, String> {
     // value -> u32
     let variant_tag = import("w_variant_tag", value(), vec![AbiParam::new(I32)])?;
     let provenance_glyph = import("w_provenance_glyph", value(), value())?;
-    // grammar ptr, (oracle ptr,len), (model ptr,len), conf_out ptr -> value
+    // (grammar ptr,len), (oracle ptr,len), (model ptr,len), conf_out ptr -> value
     let divine = import(
         "w_divine",
-        vec![i64p(), i64p(), i64p(), i64p(), i64p(), i64p()],
+        vec![i64p(), i64p(), i64p(), i64p(), i64p(), i64p(), i64p()],
         value(),
     )?;
     // inner value, confidence (f64), (oracle ptr,len), (model ptr,len) -> value
@@ -332,6 +438,13 @@ fn declare_runtime<M: Module>(module: &mut M) -> Result<Runtime, String> {
         vec![i64p(), i64p(), i64p(), AbiParam::new(I32)],
         value(),
     )?;
+    // (argc, argv) -> seed; used only by the compiled executable entry point.
+    let parse_seed = import(
+        "w_parse_seed",
+        vec![AbiParam::new(I32), i64p()],
+        vec![i64p()],
+    )?;
+    let set_seed = import("w_set_seed", vec![i64p()], vec![])?;
 
     Ok(Runtime {
         glyph,
@@ -351,6 +464,8 @@ fn declare_runtime<M: Module>(module: &mut M) -> Result<Runtime, String> {
         builder_push,
         record_finish,
         variant_finish,
+        parse_seed,
+        set_seed,
     })
 }
 
@@ -384,7 +499,7 @@ fn gen_function<M: Module>(
     fbctx: &mut FunctionBuilderContext,
     rt: &Runtime,
     fn_ids: &HashMap<String, FuncId>,
-    grammar_addrs: &[i64],
+    grammar_bytes: &[Vec<u8>],
     func: &ir::Function,
     func_id: FuncId,
 ) -> Result<(), String> {
@@ -434,7 +549,7 @@ fn gen_function<M: Module>(
                 b: &mut b,
                 refs,
                 user_refs,
-                grammar_addrs,
+                grammar_bytes,
                 locals,
                 tmps: HashMap::new(),
             };
@@ -490,8 +605,8 @@ struct Gen<'a, 'b, M: Module> {
     b: &'a mut FunctionBuilder<'b>,
     refs: Refs,
     user_refs: HashMap<String, cranelift_codegen::ir::FuncRef>,
-    /// `GrammarId` -> the leaked runtime-grammar address embedded for `divine`.
-    grammar_addrs: &'a [i64],
+    /// `GrammarId` -> serialised grammar bytes embedded for `divine`.
+    grammar_bytes: &'a [Vec<u8>],
     /// Local slot -> its `(tag, bits)` Cranelift variables.
     locals: Vec<(Variable, Variable)>,
     /// IR temporary -> its `(tag, bits)` Cranelift values.
@@ -681,8 +796,8 @@ impl<M: Module> Gen<'_, '_, M> {
                 for inp in inputs {
                     self.release_operand(inp);
                 }
-                let gaddr = self.grammar_addrs[*grammar as usize];
-                let gptr = self.b.ins().iconst(I64, gaddr);
+                let bytes = self.grammar_bytes[*grammar as usize].clone();
+                let (gptr, glen) = self.bytes_data(&bytes)?;
                 let (optr, olen) = self.str_data(oracle)?;
                 let (mptr, mlen) = self.str_data(model)?;
                 // Stack slot to receive the confidence (an out-parameter).
@@ -692,8 +807,10 @@ impl<M: Module> Gen<'_, '_, M> {
                     3,
                 ));
                 let conf_ptr = self.b.ins().stack_addr(I64, slot, 0);
-                let val =
-                    self.call_value(self.refs.divine, &[gptr, optr, olen, mptr, mlen, conf_ptr]);
+                let val = self.call_value(
+                    self.refs.divine,
+                    &[gptr, glen, optr, olen, mptr, mlen, conf_ptr],
+                );
                 let conf_f = self.b.ins().stack_load(F64, slot, 0);
                 let conf_val = self.spark_from_f64(conf_f);
                 self.tmps.insert(*dst_val, val);
@@ -909,13 +1026,19 @@ impl<M: Module> Gen<'_, '_, M> {
     /// Define a read-only data object for a string (glyph literal, field name,
     /// oracle/model id) and return `(pointer, len)` Cranelift values.
     fn str_data(&mut self, text: &str) -> Result<(CValue, CValue), String> {
-        let name = format!("glyph_{}", next_data_id());
+        self.bytes_data(text.as_bytes())
+    }
+
+    /// Define a read-only data object for arbitrary bytes (e.g. a serialised
+    /// grammar) and return `(pointer, len)` Cranelift values.
+    fn bytes_data(&mut self, bytes: &[u8]) -> Result<(CValue, CValue), String> {
+        let name = format!("data_{}", next_data_id());
         let data_id = self
             .module
             .declare_data(&name, Linkage::Local, false, false)
             .map_err(de)?;
         let mut desc = DataDescription::new();
-        desc.define(text.as_bytes().to_vec().into_boxed_slice());
+        desc.define(bytes.to_vec().into_boxed_slice());
         self.module.define_data(data_id, &desc).map_err(de)?;
         let gv = self.module.declare_data_in_func(data_id, self.b.func);
         let ptr_ty = self.module.target_config().pointer_type();
@@ -925,7 +1048,7 @@ impl<M: Module> Gen<'_, '_, M> {
         } else {
             ptr
         };
-        let len = self.b.ins().iconst(I64, text.len() as i64);
+        let len = self.b.ins().iconst(I64, bytes.len() as i64);
         Ok((ptr, len))
     }
 }
