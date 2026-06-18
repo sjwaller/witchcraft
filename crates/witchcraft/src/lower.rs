@@ -256,6 +256,21 @@ impl LowerCtx {
                 self.lower_block(fb, body)?;
                 fb.clear_last_value();
             }
+            // Governed memory is interpreter-only in v0.x.
+            Stmt::MemoryDecl(m) => {
+                return Err(Diagnostic::runtime(
+                    "governed memory is not supported by the compiler yet (use `witch run`)"
+                        .to_string(),
+                    m.span,
+                ));
+            }
+            Stmt::Within { span, .. } => {
+                return Err(Diagnostic::runtime(
+                    "`within` (memory scope) is not supported by the compiler yet (use `witch run`)"
+                        .to_string(),
+                    *span,
+                ));
+            }
             Stmt::Expr(e) => {
                 let op = self.lower_expr(fb, e)?;
                 fb.set_last_value(op);

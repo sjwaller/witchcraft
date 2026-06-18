@@ -25,7 +25,8 @@ block          = "{" { statement } "}" ;
 
 statement      = let_stmt | var_stmt | assign | print_stmt
                | while_stmt | if_stmt | return_stmt
-               | summon_stmt | divine_stmt | enact_stmt | grant_stmt | expr ;
+               | summon_stmt | divine_stmt | enact_stmt | grant_stmt
+               | memory_decl | within_stmt | expr ;
 
 let_stmt       = "let" ident [ ":" type ] "=" expr ;
 var_stmt       = "var" ident [ ":" type ] "=" expr ;
@@ -48,6 +49,15 @@ enact_arm      = ident [ "(" [ ident { "," ident } ] ")" ] "=>" block [ "," ] ;
 
 (* Grants its capabilities to the enclosed region. Compile-time only. *)
 grant_stmt     = "with" "grant" capability { "," capability } block ;
+
+(* Governed memory: scope is a capability; `within` grants scope(<name>). *)
+memory_decl    = "memory" ident "{" { mem_setting [ "," ] } "}" ;
+mem_setting    = "scope" ident
+               | "retention" number [ ident ]
+               | "retrieval" ident { "+" ident }
+               | "audit" ident ;
+within_stmt    = "within" ident block ;
+(* memory access is postfix: mem.write(v) | mem.recent(k) *)
 
 (* Expressions, lowest to highest precedence. *)
 expr           = or_expr ;

@@ -154,6 +154,15 @@ pub enum Stmt {
         body: Vec<Stmt>,
         span: Span,
     },
+    /// `memory <name> { scope S, retention N unit, retrieval ..., audit ... }`
+    MemoryDecl(MemoryDecl),
+    /// `within <scope> { ... }` — grants the `scope(<scope>)` capability to the
+    /// region (the consuming-primitive grant sugar from capability-effects D1).
+    Within {
+        scope: String,
+        body: Vec<Stmt>,
+        span: Span,
+    },
     Return {
         value: Option<Expr>,
         span: Span,
@@ -172,6 +181,20 @@ pub struct DivineStmt {
     /// Discharge clause is grammar-optional; the type system enforces discharge.
     pub threshold: Option<f64>,
     pub fallback: Option<Expr>,
+    pub span: Span,
+}
+
+/// A governed-memory declaration. `scope` is required (checked); the rest are
+/// governance settings (retention is runtime-enforced, audit is a runtime log).
+#[derive(Clone, Debug)]
+pub struct MemoryDecl {
+    pub name: String,
+    pub scope: Option<String>,
+    /// `(amount, unit)` — the unit is cosmetic; retention is enforced in logical
+    /// ticks (see the interpreter's logical clock).
+    pub retention: Option<(f64, String)>,
+    pub retrieval: Vec<String>,
+    pub audit_required: bool,
     pub span: Span,
 }
 

@@ -364,6 +364,13 @@ impl Parser {
                 let body = self.block()?;
                 Ok(Stmt::Grant { caps, body, span })
             }
+            TokenKind::Memory => self.memory_decl(),
+            TokenKind::Within => {
+                self.bump();
+                let (scope, _) = self.expect_ident("a scope name")?;
+                let body = self.block()?;
+                Ok(Stmt::Within { scope, body, span })
+            }
             TokenKind::Divine => self.divine_stmt(),
             TokenKind::Enact => self.enact_stmt(),
             TokenKind::Ident(name) => {
@@ -379,6 +386,64 @@ impl Parser {
             }
             _ => Ok(Stmt::Expr(self.expr()?)),
         }
+    }
+
+    fn memory_decl(&mut self) -> Result<Stmt, Diagnostic> {
+        let span = self.span();
+        self.expect(TokenKind::Memory, "`memory`")?;
+        let (name, _) = self.expect_ident("a memory name")?;
+        self.expect(TokenKind::LBrace, "`{` to open the memory governance block")?;
+        let mut scope = None;
+        let mut retention = None;
+        let mut retrieval = Vec::new();
+        let mut audit_required = false;
+        while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
+            // Setting keywords are contextual identifiers, so common words stay
+            // usable elsewhere in the language.
+            let (setting, sspan) = self.expect_ident("a memory setting")?;
+            match setting.as_str() {
+                "scope" => {
+                    let (s, _) = self.expect_ident("a scope name")?;
+                    scope = Some(s);
+                }
+                "retention" => {
+                    let amount = self.number("a retention amount")?;
+                    // optional unit word (months, days, ...)
+                    let unit = if let TokenKind::Ident(_) = self.peek_kind() {
+                        self.expect_ident("a retention unit")?.0
+                    } else {
+                        "ticks".to_string()
+                    };
+                    retention = Some((amount, unit));
+                }
+                "retrieval" => {
+                    retrieval.push(self.expect_ident("a retrieval policy")?.0);
+                    while self.eat(&TokenKind::Plus) {
+                        retrieval.push(self.expect_ident("a retrieval policy")?.0);
+                    }
+                }
+                "audit" => {
+                    let (mode, _) = self.expect_ident("`required` or `optional`")?;
+                    audit_required = mode == "required";
+                }
+                other => {
+                    return Err(Diagnostic::parse(
+                        format!("unknown memory setting `{}`", other),
+                        sspan,
+                    ));
+                }
+            }
+            self.eat(&TokenKind::Comma);
+        }
+        self.expect(TokenKind::RBrace, "`}` to close the memory block")?;
+        Ok(Stmt::MemoryDecl(MemoryDecl {
+            name,
+            scope,
+            retention,
+            retrieval,
+            audit_required,
+            span,
+        }))
     }
 
     fn divine_stmt(&mut self) -> Result<Stmt, Diagnostic> {

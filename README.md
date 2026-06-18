@@ -198,6 +198,31 @@ print similarity(a, b)        # same space: fine
 A passing check guarantees only that compared embeddings share a space — never
 that an embedding is meaningful or that a `nearest` result is *relevant* (§8).
 
+## Governed memory (scope is a capability)
+
+A `memory` is a declared, governed resource — its `scope` is bound to a capability
+(via the capability discipline above), so a read or write outside the scope is a
+**compile-time error**. The headline §5.2 guarantee: a cross-tenant access *will
+not compile*.
+
+```
+memory tickets { scope tenant, retention 24 months, retrieval recency, audit required }
+
+within tenant {                 # grants scope(tenant)
+    tickets.write("payment failed for order 7")
+    print tickets.recent(5)     # newest-first, non-expired
+}
+
+tickets.recent(5)               # compile error: scope(tenant) not granted here
+```
+
+Retention and audit are **runtime-enforced** (deterministic in-memory store with a
+logical clock; expired entries are not retrieved; `audit required` records every
+governed access). v0.1 ships recency/exact retrieval; semantic retrieval (a
+same-space query embedding against stored embeddings) is composed in the flagship.
+Memory is interpreter-only in v0.1. The green check guarantees scope adherence —
+never that retained data is correct, audit complete, or retrieval relevant (§8).
+
 ## A green build is structural, not a correctness guarantee
 
 This cannot be overstated (paper §8): the compiler verifies **structural**

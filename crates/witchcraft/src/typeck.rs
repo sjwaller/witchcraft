@@ -94,6 +94,8 @@ struct Checker {
     active_caps: Vec<Capability>,
     /// Oracle name → model id, so `oracle.embed(...)` resolves its space.
     oracles: HashMap<String, String>,
+    /// Memory name → scope name, so reads/writes require `scope(<scope>)`.
+    memories: HashMap<String, String>,
     diags: Vec<Diagnostic>,
 }
 
@@ -105,6 +107,7 @@ impl Checker {
             fn_requires: HashMap::new(),
             active_caps: Vec::new(),
             oracles: HashMap::new(),
+            memories: HashMap::new(),
             diags: Vec::new(),
         }
     }
@@ -128,11 +131,12 @@ impl Checker {
                 self.fn_requires.insert(f.name.clone(), f.requires.clone());
             }
         }
-        // Pass 1c: record oracle model ids so `oracle.embed` resolves its space.
+        // Pass 1c: record oracle model ids and memory scopes so `oracle.embed`
+        // resolves its space and memory accesses resolve their scope capability.
         for item in &prog.items {
             match item {
-                Item::Stmt(s) => self.collect_oracles(std::slice::from_ref(s)),
-                Item::Fn(f) => self.collect_oracles(&f.body),
+                Item::Stmt(s) => self.collect_resources(std::slice::from_ref(s)),
+                Item::Fn(f) => self.collect_resources(&f.body),
                 Item::Type(_) => {}
             }
         }
@@ -181,28 +185,36 @@ impl Checker {
         self.pop();
     }
 
-    /// Recursively record oracle name → model id from `summon` statements.
-    fn collect_oracles(&mut self, stmts: &[Stmt]) {
+    /// Recursively record oracle model ids and memory scopes (both are name-bound
+    /// resources whose identity the checker needs regardless of definition order).
+    fn collect_resources(&mut self, stmts: &[Stmt]) {
         for s in stmts {
             match s {
                 Stmt::Summon { name, model, .. } => {
                     self.oracles.insert(name.clone(), model.clone());
                 }
-                Stmt::While { body, .. } => self.collect_oracles(body),
+                Stmt::MemoryDecl(m) => {
+                    if let Some(scope) = &m.scope {
+                        self.memories.insert(m.name.clone(), scope.clone());
+                    }
+                }
+                Stmt::While { body, .. } | Stmt::Within { body, .. } => {
+                    self.collect_resources(body)
+                }
                 Stmt::If {
                     then_branch,
                     else_branch,
                     ..
                 } => {
-                    self.collect_oracles(then_branch);
+                    self.collect_resources(then_branch);
                     if let Some(eb) = else_branch {
-                        self.collect_oracles(eb);
+                        self.collect_resources(eb);
                     }
                 }
-                Stmt::Grant { body, .. } => self.collect_oracles(body),
+                Stmt::Grant { body, .. } => self.collect_resources(body),
                 Stmt::Enact { arms, .. } => {
                     for a in arms {
-                        self.collect_oracles(&a.body);
+                        self.collect_resources(&a.body);
                     }
                 }
                 _ => {}
@@ -303,6 +315,24 @@ impl Checker {
                 arms,
                 span,
             } => self.check_enact(subject, arms, *span),
+            Stmt::MemoryDecl(m) => {
+                if m.scope.is_none() {
+                    self.diags.push(Diagnostic::type_error(
+                        format!("memory `{}` must declare a `scope`", m.name),
+                        m.span,
+                    ));
+                }
+            }
+            // `within <scope>` grants the scope capability to its body only.
+            Stmt::Within { scope, body, .. } => {
+                self.active_caps.push(Capability {
+                    kind: "scope".to_string(),
+                    param: Some(scope.clone()),
+                    span: crate::span::Span::new(0, 0),
+                });
+                self.check_block(body);
+                self.active_caps.pop();
+            }
             // A grant region adds its capabilities to the active context for the
             // enclosed body only; they do not leak past the region.
             Stmt::Grant { caps, body, .. } => {
@@ -511,12 +541,16 @@ impl Checker {
                 Type::Unknown
             }
             Expr::Method {
-                recv, method, args, ..
+                recv,
+                method,
+                args,
+                span,
             } => {
                 let recv_ty = self.infer(recv);
                 for a in args {
                     let _ = self.infer(a);
                 }
+                // `oracle.embed(...)` -> embedding@<oracle space>.
                 if method == "embed" {
                     if let Type::Oracle = recv_ty {
                         let space = match recv.as_ref() {
@@ -525,9 +559,14 @@ impl Checker {
                         };
                         return match space {
                             Some(s) => Type::Embedding(s),
-                            // Oracle whose model we cannot statically resolve.
                             None => Type::Embedding("<oracle>".to_string()),
                         };
+                    }
+                }
+                // Governed-memory access requires the memory's scope capability.
+                if let Expr::Ident(mem_name, _) = recv.as_ref() {
+                    if let Some(scope) = self.memories.get(mem_name).cloned() {
+                        return self.check_memory_access(mem_name, &scope, method, *span);
                     }
                 }
                 Type::Unknown
@@ -602,7 +641,39 @@ impl Checker {
                 }
                 Some(Type::List(Box::new(Type::Unknown)))
             }
+            // Logical-clock and audit affordances for governed memory (v0.x).
+            "advance" => Some(Type::Unit),
+            "audit_log" => Some(Type::List(Box::new(Type::Glyph))),
             _ => None,
+        }
+    }
+
+    /// A governed-memory access (`mem.write`/`mem.recent`) requires the memory's
+    /// scope capability in context, or it is an out-of-scope compile error.
+    fn check_memory_access(
+        &mut self,
+        mem: &str,
+        scope: &str,
+        method: &str,
+        span: crate::span::Span,
+    ) -> Type {
+        let cap = Capability {
+            kind: "scope".to_string(),
+            param: Some(scope.to_string()),
+            span,
+        };
+        if !self.cap_granted(&cap) {
+            self.diags.push(Diagnostic::type_error(
+                format!(
+                    "out-of-scope access to memory `{}`: `scope({})` not granted (enter `within {}`)",
+                    mem, scope, scope
+                ),
+                span,
+            ));
+        }
+        match method {
+            "recent" | "nearest" => Type::List(Box::new(Type::Unknown)),
+            _ => Type::Unit,
         }
     }
 

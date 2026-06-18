@@ -45,6 +45,18 @@ struct Interp {
     decoder: MockDecoder,
     config: RunConfig,
     out: String,
+    /// Governed-memory stores, a logical clock (for deterministic retention), and
+    /// an audit log. Memory is an in-memory v0.x runtime resource (D2).
+    memories: HashMap<String, MemoryStore>,
+    clock: u64,
+    audit: Vec<String>,
+}
+
+struct MemoryStore {
+    scope: String,
+    retention_ticks: Option<f64>,
+    audit_required: bool,
+    entries: Vec<(u64, Value)>,
 }
 
 impl Interp {
@@ -62,6 +74,9 @@ impl Interp {
             decoder: MockDecoder::new(config.seed),
             config,
             out: String::new(),
+            memories: HashMap::new(),
+            clock: 0,
+            audit: Vec::new(),
         }
     }
 
@@ -197,6 +212,21 @@ impl Interp {
             // Capabilities are compile-time only; at run time a grant region is
             // an ordinary lexical block.
             Stmt::Grant { body, .. } => self.exec_block(body),
+            Stmt::MemoryDecl(m) => {
+                self.memories.insert(
+                    m.name.clone(),
+                    MemoryStore {
+                        scope: m.scope.clone().unwrap_or_default(),
+                        retention_ticks: m.retention.as_ref().map(|(n, _)| *n),
+                        audit_required: m.audit_required,
+                        entries: Vec::new(),
+                    },
+                );
+                Ok(Exec::Value(Value::Unit))
+            }
+            // `within` is a capability grant at compile time; at run time it is an
+            // ordinary lexical block.
+            Stmt::Within { body, .. } => self.exec_block(body),
             Stmt::Expr(e) => {
                 let v = self.eval(e)?;
                 Ok(Exec::Value(v))
@@ -382,6 +412,17 @@ impl Interp {
                 args,
                 span,
             } => {
+                // Memory accesses resolve by name before evaluating the receiver
+                // (a memory is a runtime resource, not an ordinary value binding).
+                if let Expr::Ident(name, _) = recv.as_ref() {
+                    if self.memories.contains_key(name) {
+                        let argv = args
+                            .iter()
+                            .map(|a| self.eval(a))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        return self.memory_op(name, method, argv, *span);
+                    }
+                }
                 let r = self.eval(recv)?;
                 match (method.as_str(), &r) {
                     ("embed", Value::Oracle { name, model }) => {
@@ -631,7 +672,75 @@ impl Interp {
                     .collect();
                 Ok(Some(Value::List(chosen)))
             }
+            // Advance the logical clock (deterministic retention testing).
+            "advance" => {
+                let n = as_spark(args.first().unwrap_or(&Value::Spark(0.0)), span)?.max(0.0);
+                self.clock = self.clock.saturating_add(n as u64);
+                Ok(Some(Value::Unit))
+            }
+            // The accumulated audit records as a list of glyphs.
+            "audit_log" => Ok(Some(Value::List(
+                self.audit.iter().cloned().map(Value::Glyph).collect(),
+            ))),
             _ => Ok(None),
+        }
+    }
+
+    /// Run a governed-memory operation (`write` / `recent`). Scope is enforced
+    /// statically; here we enforce retention (expired entries are not returned)
+    /// and audit (each governed access appends a record).
+    fn memory_op(
+        &mut self,
+        name: &str,
+        method: &str,
+        args: Vec<Value>,
+        span: crate::span::Span,
+    ) -> Result<Value, Diagnostic> {
+        let now = self.clock;
+        let store = self
+            .memories
+            .get_mut(name)
+            .ok_or_else(|| Diagnostic::runtime(format!("unknown memory `{}`", name), span))?;
+        if store.audit_required {
+            self.audit.push(format!(
+                "memory={} op={} scope={}",
+                name, method, store.scope
+            ));
+        }
+        match method {
+            "write" => {
+                let entry = args.into_iter().next().unwrap_or(Value::Unit);
+                store.entries.push((now, entry));
+                self.clock = self.clock.saturating_add(1);
+                Ok(Value::Unit)
+            }
+            "recent" | "nearest" => {
+                // recency retrieval: newest-first, excluding entries older than the
+                // declared retention (semantic retrieval is composed in the flagship).
+                let k = args
+                    .last()
+                    .map(|v| as_spark(v, span))
+                    .transpose()?
+                    .unwrap_or(0.0)
+                    .max(0.0) as usize;
+                let retention = store.retention_ticks;
+                let mut live: Vec<(u64, Value)> = store
+                    .entries
+                    .iter()
+                    .filter(|(tick, _)| match retention {
+                        Some(r) => (now.saturating_sub(*tick)) as f64 <= r,
+                        None => true,
+                    })
+                    .cloned()
+                    .collect();
+                live.sort_by_key(|(tick, _)| std::cmp::Reverse(*tick));
+                let chosen = live.into_iter().take(k).map(|(_, v)| v).collect();
+                Ok(Value::List(chosen))
+            }
+            other => Err(Diagnostic::runtime(
+                format!("unknown memory operation `{}`", other),
+                span,
+            )),
         }
     }
 }

@@ -52,6 +52,10 @@ pub enum TokenKind {
     Requires,
     Grant,
 
+    // Governed-memory keywords
+    Memory,
+    Within,
+
     // Boolean / logical operators
     And,
     Or,
@@ -123,6 +127,8 @@ pub fn keyword(ident: &str) -> Option<TokenKind> {
         "confidence" => TokenKind::Confidence,
         "requires" => TokenKind::Requires,
         "grant" => TokenKind::Grant,
+        "memory" => TokenKind::Memory,
+        "within" => TokenKind::Within,
         "and" => TokenKind::And,
         "or" => TokenKind::Or,
         "not" => TokenKind::Not,
