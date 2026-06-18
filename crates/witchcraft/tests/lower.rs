@@ -121,8 +121,11 @@ print d.urgency
             _ => None,
         })
         .expect("divine lowers to a runtime Decode (inference is never resolved at lower time)");
-    assert_eq!(decode.0, "o", "provenance carries the oracle binding name");
-    assert_eq!(decode.1, "m", "provenance carries the oracle model id");
+    assert_eq!(
+        decode.0, "m",
+        "provenance carries the oracle's semantic intent"
+    );
+    assert_eq!(decode.1, "m", "provenance carries the resolved model id");
 
     assert!(
         terminators(main)

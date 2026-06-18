@@ -37,8 +37,11 @@ pub struct Provenance {
 
 impl Provenance {
     pub fn render(&self) -> String {
+        // Mirrors the interpreter's `Provenance::render`. The compiled path is
+        // Mock-only in v0.2 (real engines attach in `complete-native-compile`),
+        // so version/backend/sampling are the Mock constants here.
         format!(
-            "oracle={} model={} seed={}",
+            "intent={} model={} version=mock backend=mock seed={} sampling=deterministic",
             self.oracle, self.model, self.seed
         )
     }

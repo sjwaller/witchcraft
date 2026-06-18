@@ -35,8 +35,18 @@ fn main() -> ExitCode {
 const USAGE: &str = "\
 usage:
   witch check   <file.witch>
-  witch run     <file.witch> [--seed <n>]
-  witch --version";
+  witch run     <file.witch> [--seed <n>] [--manifest <file>]
+  witch --version
+
+--manifest <file>  bind each oracle intent to a concrete engine for this run.
+                   With no manifest, the deterministic Mock engine serves every
+                   need (offline). Models are named only in the manifest, never
+                   in source.
+
+--seed <n>         determinism contract: with the Mock test engine the same seed
+                   reproduces output exactly. With real local/network engines a
+                   seed is BEST-EFFORT only — output is not guaranteed to
+                   reproduce across machines, quantisations, or providers.";
 
 /// The toolchain version and the triple it was built for.
 fn version_string() -> String {
@@ -69,10 +79,20 @@ fn run(args: &[String]) -> Result<String, CliError> {
             ))
         }
         "run" => {
-            let (file, seed) = parse_run_args(args)?;
+            let (file, seed, manifest_path) = parse_run_args(args)?;
             let src = read(&file)?;
+            let manifest = match manifest_path {
+                Some(path) => {
+                    let raw = read(&path)?;
+                    Some(witchcraft::manifest::Manifest::parse(&raw).map_err(|e| {
+                        CliError::Diagnostics(vec![Diagnostic::io(format!("{}: {}", path, e))])
+                    })?)
+                }
+                None => None,
+            };
             let config = RunConfig {
                 seed,
+                manifest,
                 ..RunConfig::default()
             };
             run_source(&src, config).map_err(CliError::Diagnostics)
@@ -91,9 +111,10 @@ fn positional(args: &[String]) -> Result<String, CliError> {
         .ok_or_else(|| CliError::Usage("error: expected a file path".to_string()))
 }
 
-fn parse_run_args(args: &[String]) -> Result<(String, u64), CliError> {
+fn parse_run_args(args: &[String]) -> Result<(String, u64, Option<String>), CliError> {
     let mut file: Option<String> = None;
     let mut seed: u64 = 0;
+    let mut manifest: Option<String> = None;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
@@ -104,6 +125,13 @@ fn parse_run_args(args: &[String]) -> Result<(String, u64), CliError> {
                 seed = raw
                     .parse()
                     .map_err(|_| CliError::Usage(format!("error: invalid seed `{}`", raw)))?;
+                i += 2;
+            }
+            "--manifest" => {
+                let raw = args.get(i + 1).ok_or_else(|| {
+                    CliError::Usage("error: --manifest requires a file path".to_string())
+                })?;
+                manifest = Some(raw.clone());
                 i += 2;
             }
             other if other.starts_with("--") => {
@@ -119,7 +147,7 @@ fn parse_run_args(args: &[String]) -> Result<(String, u64), CliError> {
         }
     }
     let file = file.ok_or_else(|| CliError::Usage("error: expected a file path".to_string()))?;
-    Ok((file, seed))
+    Ok((file, seed, manifest))
 }
 
 fn read(path: &str) -> Result<String, CliError> {

@@ -71,7 +71,7 @@ fn run_flagship_example_end_to_end() {
     assert!(out.status.success(), "flagship should run cleanly");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("recalled scoped history"));
-    assert!(stdout.contains("provenance: oracle=triage"));
+    assert!(stdout.contains("provenance: intent=mock-triage-v1"));
 }
 
 #[test]

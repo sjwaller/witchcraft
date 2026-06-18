@@ -9,3 +9,18 @@ repository.workspace = true
 [lib]
 name = "witchcraft"
 path = "src/lib.rs"
+
+[features]
+default = []
+# Real local inference via llama.cpp (GBNF token-by-token grammar constraint).
+# Links libllama (C/C++) — confined to model execution; off by default so the
+# core build stays self-contained and offline. The `common` feature exposes the
+# GBNF grammar sampler.
+llama = ["dep:llama-cpp-2", "llama-cpp-2/common", "dep:serde_json"]
+# Real network inference via a frontier API (JSON-Schema structured output).
+frontier = ["dep:ureq", "dep:serde_json"]
+
+[dependencies]
+llama-cpp-2 = { version = "0.1", optional = true }
+ureq = { version = "2", optional = true, features = ["json"] }
+serde_json = { version = "1", optional = true }

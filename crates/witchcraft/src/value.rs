@@ -4,16 +4,43 @@
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Provenance {
+    /// The semantic intent the oracle names (e.g. `TriageReasoner`). Never a model.
     pub oracle: String,
+    /// The concrete model id the manifest resolved the intent to.
     pub model: String,
+    /// The exact model artifact: a content hash (local) or provider version
+    /// string (network), so a model version change is detectable from provenance
+    /// alone (§6.2).
+    pub model_version_or_sha: String,
+    /// Which engine served the inference (e.g. `mock`, `llama`, `frontier`).
+    pub backend_id: String,
     pub seed: u64,
+    /// Sampling description (e.g. `deterministic`, `temp=0.7`).
+    pub sampling: String,
 }
 
 impl Provenance {
+    /// A deterministic provenance for the Mock engine / offline default.
+    pub fn mock(oracle: &str, model: &str, seed: u64) -> Self {
+        Provenance {
+            oracle: oracle.to_string(),
+            model: model.to_string(),
+            model_version_or_sha: "mock".to_string(),
+            backend_id: "mock".to_string(),
+            seed,
+            sampling: "deterministic".to_string(),
+        }
+    }
+
     pub fn render(&self) -> String {
         format!(
-            "oracle={} model={} seed={}",
-            self.oracle, self.model, self.seed
+            "intent={} model={} version={} backend={} seed={} sampling={}",
+            self.oracle,
+            self.model,
+            self.model_version_or_sha,
+            self.backend_id,
+            self.seed,
+            self.sampling
         )
     }
 }

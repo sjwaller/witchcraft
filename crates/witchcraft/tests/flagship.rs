@@ -41,7 +41,8 @@ fn flagship_runs_end_to_end_with_provenance() {
         "memory retrieval ran: {out}"
     );
     assert!(
-        out.contains("provenance: oracle=triage model=mock-triage-v1"),
+        out.contains("provenance: intent=mock-triage-v1 model=mock-triage-v1")
+            && out.contains("backend=mock"),
         "enacted action carries provenance: {out}"
     );
 }

@@ -8,6 +8,7 @@
 
 pub mod ast;
 pub mod decoder;
+pub mod engine;
 pub mod env;
 pub mod error;
 pub mod grammar;
@@ -15,6 +16,7 @@ pub mod interp;
 pub mod ir;
 pub mod lexer;
 pub mod lower;
+pub mod manifest;
 pub mod parser;
 pub mod span;
 pub mod token;

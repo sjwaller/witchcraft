@@ -6,10 +6,12 @@
 use std::collections::HashMap;
 
 use crate::ast::*;
-use crate::decoder::{Decoder, MockDecoder};
+use crate::engine::mock::MockEngine;
+use crate::engine::{Engine, InferRequest, Policy};
 use crate::env::{AssignError, DefineError, Env};
 use crate::error::Diagnostic;
 use crate::grammar;
+use crate::manifest::Manifest;
 use crate::typeck::{build_type_table, resolve_type};
 use crate::types::Type;
 use crate::value::{Provenance, Value};
@@ -22,6 +24,10 @@ pub struct RunConfig {
     pub weaken_divine: bool,
     /// Fault-injection knob: when set, every discharge sees this confidence.
     pub force_confidence: Option<f64>,
+    /// Deployment binding (change `add-inference-runtime`). When present, each
+    /// oracle's intent is resolved to a concrete engine at load; when absent the
+    /// deterministic Mock engine serves every need (the offline default).
+    pub manifest: Option<Manifest>,
 }
 
 enum Exec {
@@ -34,6 +40,7 @@ enum Exec {
 
 pub fn run(prog: &Program, config: RunConfig) -> Result<String, Diagnostic> {
     let mut interp = Interp::new(prog, config);
+    interp.resolve_engines(prog)?;
     interp.run_program(prog)?;
     Ok(interp.out)
 }
@@ -43,7 +50,12 @@ struct Interp {
     fns: HashMap<String, FnDecl>,
     familiars: HashMap<String, FamiliarDecl>,
     types: HashMap<String, Type>,
-    decoder: MockDecoder,
+    /// The Mock engine that serves every need when no manifest is present (the
+    /// offline default). One shared instance preserves the single deterministic
+    /// decode sequence the runtime mirrors.
+    default_engine: Box<dyn Engine>,
+    /// Engines resolved from the manifest at load, keyed by oracle intent.
+    engines: HashMap<String, Box<dyn Engine>>,
     config: RunConfig,
     out: String,
     /// Governed-memory stores, a logical clock (for deterministic retention), and
@@ -75,18 +87,42 @@ impl Interp {
                 _ => {}
             }
         }
+        let default_engine: Box<dyn Engine> = Box::new(MockEngine::new(config.seed, ""));
         Interp {
             env: Env::new(),
             fns,
             familiars,
             types: build_type_table(prog),
-            decoder: MockDecoder::new(config.seed),
+            default_engine,
+            engines: HashMap::new(),
             config,
             out: String::new(),
             memories: HashMap::new(),
             clock: 0,
             audit: Vec::new(),
         }
+    }
+
+    /// Load-time engine resolution (change `add-inference-runtime`). For each
+    /// oracle intent the program summons, resolve a concrete engine from the
+    /// manifest under the intent's policy. A need that cannot be satisfied makes
+    /// the program refuse to start. With no manifest, the default Mock serves
+    /// every need and nothing is resolved here.
+    fn resolve_engines(&mut self, prog: &Program) -> Result<(), Diagnostic> {
+        let manifest = match &self.config.manifest {
+            Some(m) => m.clone(),
+            None => return Ok(()),
+        };
+        let policies = oracle_policies(prog);
+        for (intent, (policy, span)) in policies {
+            match manifest.resolve(&intent, &policy, self.config.seed) {
+                Ok(engine) => {
+                    self.engines.insert(intent, engine);
+                }
+                Err(e) => return Err(Diagnostic::runtime(e.message(), span)),
+            }
+        }
+        Ok(())
     }
 
     fn run_program(&mut self, prog: &Program) -> Result<(), Diagnostic> {
@@ -260,27 +296,43 @@ impl Interp {
     }
 
     fn exec_divine(&mut self, d: &DivineStmt) -> Result<Exec, Diagnostic> {
+        // Evaluate the inputs into a prompt the engine receives. The v0.1 ABI
+        // dropped these; the contract threads them through (Break 3).
+        let mut parts = Vec::with_capacity(d.inputs.len());
         for input in &d.inputs {
-            self.eval(input)?;
+            let v = self.eval(input)?;
+            parts.push(v.display());
         }
+        let prompt = parts.join("\n");
+
         let out_ty = resolve_type(&d.out_ty, &self.types)
             .map_err(|e| Diagnostic::runtime(e.message, d.span))?;
         let g = grammar::compile(&out_ty, self.config.weaken_divine, d.span)
             .map_err(|e| Diagnostic::runtime(e.message, d.span))?;
 
-        let model = match self.env.get(&d.oracle) {
+        // The oracle names a semantic intent; the manifest binds it to an engine.
+        let intent = match self.env.get(&d.oracle) {
             Some(Value::Oracle { model, .. }) => model.clone(),
-            _ => "unknown".to_string(),
+            _ => d.oracle.clone(),
         };
-        let provenance = Provenance {
-            oracle: d.oracle.clone(),
-            model,
-            seed: self.config.seed,
+        let seed = self.config.seed;
+        let policy = Policy::default();
+        let req = InferRequest {
+            intent_id: &intent,
+            input: &prompt,
+            grammar: &g,
+            policy: &policy,
+            seed,
         };
 
-        let decoded = self.decoder.decode(&g);
-        let confidence = self.config.force_confidence.unwrap_or(decoded.confidence);
-        let value = attach_provenance(decoded.value, &provenance);
+        let engine: &mut dyn Engine = match self.engines.get_mut(&intent) {
+            Some(e) => e.as_mut(),
+            None => self.default_engine.as_mut(),
+        };
+        let result = engine.infer(&req);
+        let confidence = self.config.force_confidence.unwrap_or(result.confidence);
+        let provenance = result.provenance;
+        let value = attach_provenance(result.value, &provenance);
 
         match d.threshold {
             Some(threshold) => {
@@ -456,7 +508,10 @@ impl Interp {
                             provenance: Some(Provenance {
                                 oracle: name.clone(),
                                 model: model.clone(),
+                                model_version_or_sha: "mock".to_string(),
+                                backend_id: "mock".to_string(),
                                 seed: self.config.seed,
+                                sampling: "deterministic".to_string(),
                             }),
                         })
                     }
@@ -862,6 +917,132 @@ fn as_bool(v: &Value, span: crate::span::Span) -> Result<bool, Diagnostic> {
             format!("expected bool, found {}", other.type_name()),
             span,
         )),
+    }
+}
+
+// ---------- load-time policy derivation (change add-inference-runtime) ----------
+
+use crate::span::Span;
+
+/// Derive, per oracle intent, the POLICY in force at the `divine` sites that use
+/// it (locality via `permit(network)`, downgrade via `permit(unsafe_inference)`),
+/// plus a representative span for diagnostics. Capabilities granted around a site
+/// (`with grant`, a `fn`'s `requires`, a `familiar`'s `permits`) are the
+/// source-visible constraints the resolver checks against the manifest.
+fn oracle_policies(prog: &Program) -> HashMap<String, (Policy, Span)> {
+    let mut var_to_intent: HashMap<String, String> = HashMap::new();
+    for item in &prog.items {
+        match item {
+            Item::Fn(f) => collect_summons(&f.body, &mut var_to_intent),
+            Item::Familiar(fam) => collect_summons(&fam.body, &mut var_to_intent),
+            Item::Stmt(s) => collect_summons(std::slice::from_ref(s), &mut var_to_intent),
+            Item::Type(_) => {}
+        }
+    }
+
+    let mut out: HashMap<String, (Policy, Span)> = HashMap::new();
+    for item in &prog.items {
+        match item {
+            Item::Fn(f) => walk_policy(&f.body, &cap_names(&f.requires), &var_to_intent, &mut out),
+            Item::Familiar(fam) => walk_policy(
+                &fam.body,
+                &cap_names(&fam.permits),
+                &var_to_intent,
+                &mut out,
+            ),
+            Item::Stmt(s) => walk_policy(std::slice::from_ref(s), &[], &var_to_intent, &mut out),
+            Item::Type(_) => {}
+        }
+    }
+    out
+}
+
+fn cap_names(caps: &[Capability]) -> Vec<String> {
+    caps.iter().map(|c| c.display()).collect()
+}
+
+fn collect_summons(stmts: &[Stmt], out: &mut HashMap<String, String>) {
+    for s in stmts {
+        match s {
+            Stmt::Summon { name, model, .. } => {
+                out.insert(name.clone(), model.clone());
+            }
+            Stmt::While { body, .. } | Stmt::Grant { body, .. } | Stmt::Within { body, .. } => {
+                collect_summons(body, out)
+            }
+            Stmt::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                collect_summons(then_branch, out);
+                if let Some(e) = else_branch {
+                    collect_summons(e, out);
+                }
+            }
+            Stmt::Enact { arms, .. } => {
+                for arm in arms {
+                    collect_summons(&arm.body, out);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn walk_policy(
+    stmts: &[Stmt],
+    active: &[String],
+    var_to_intent: &HashMap<String, String>,
+    out: &mut HashMap<String, (Policy, Span)>,
+) {
+    for s in stmts {
+        match s {
+            Stmt::Divine(d) => {
+                let intent = var_to_intent
+                    .get(&d.oracle)
+                    .cloned()
+                    .unwrap_or_else(|| d.oracle.clone());
+                let allow_network = active.iter().any(|c| c == "permit(network)");
+                let allow_downgrade = active.iter().any(|c| c == "permit(unsafe_inference)");
+                out.entry(intent)
+                    .and_modify(|(p, _)| {
+                        p.allow_network |= allow_network;
+                        p.allow_downgrade |= allow_downgrade;
+                    })
+                    .or_insert((
+                        Policy {
+                            allow_network,
+                            allow_downgrade,
+                            ..Policy::default()
+                        },
+                        d.span,
+                    ));
+            }
+            Stmt::Grant { caps, body, .. } => {
+                let mut next = active.to_vec();
+                next.extend(cap_names(caps));
+                walk_policy(body, &next, var_to_intent, out);
+            }
+            Stmt::Within { body, .. } => walk_policy(body, active, var_to_intent, out),
+            Stmt::While { body, .. } => walk_policy(body, active, var_to_intent, out),
+            Stmt::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                walk_policy(then_branch, active, var_to_intent, out);
+                if let Some(e) = else_branch {
+                    walk_policy(e, active, var_to_intent, out);
+                }
+            }
+            Stmt::Enact { arms, .. } => {
+                for arm in arms {
+                    walk_policy(&arm.body, active, var_to_intent, out);
+                }
+            }
+            _ => {}
+        }
     }
 }
 

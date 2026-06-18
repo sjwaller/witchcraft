@@ -312,7 +312,9 @@ impl LowerCtx {
             dst_val,
             dst_conf,
             grammar: gid,
-            oracle: d.oracle.clone(),
+            // The provenance "intent" is the oracle's semantic intent (the
+            // summon string), not the local variable name (contract D1).
+            oracle: model.clone(),
             model,
             inputs,
         });
@@ -356,7 +358,11 @@ impl LowerCtx {
                     dst: inf,
                     val: Operand::Tmp(dst_val),
                     conf: Operand::Tmp(dst_conf),
-                    oracle: d.oracle.clone(),
+                    oracle: self
+                        .oracles
+                        .get(&d.oracle)
+                        .cloned()
+                        .unwrap_or_else(|| "unknown".to_string()),
                     model: self
                         .oracles
                         .get(&d.oracle)
