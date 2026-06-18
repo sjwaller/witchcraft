@@ -3,11 +3,21 @@
 > model dependency and may land first; compiled `divine`/`embed` and the cross-engine
 > proofs require change A.
 
+> STATUS (in progress): Group 1 (familiar lowering) is **done and tested**. Groups
+> 2–4 (native list/embedding/memory/within values + RC + ABI + lowering) and 5
+> (compiled `divine` through the engine contract + manifest in the compiled
+> runtime) are the remaining native-codegen work — large changes across `ir.rs`,
+> `lower.rs`, `witchcraft-codegen`, and `witchcraft-runtime` (new heap payloads,
+> RC, ABI symbols). Groups 7–8 (compiled litmus / engine-swap on a real local
+> llama + frontier) additionally require `libllama` + a GGUF model and a live API
+> key, which are unavailable in this offline environment, so the final acceptance
+> bar cannot be executed here.
+
 ## 1. Familiar lowers as a function (smallest first)
 
-- [ ] 1.1 Remove the `Item::Familiar` lowering rejection; route a familiar through `lower_function`; calls dispatch via the existing function path
-- [ ] 1.2 Confirm permits + single-pass remain compile-time only (no runtime representation)
-- [ ] 1.3 Test: a familiar program builds with `grimoire build` and matches the interpreter under the same seed (Mock)
+- [x] 1.1 Remove the `Item::Familiar` lowering rejection; route a familiar through `lower_function`; calls dispatch via the existing function path <!-- lower.rs -->
+- [x] 1.2 Permits + single-pass remain compile-time only (no runtime representation) — erased like `grant`
+- [x] 1.3 Test: a familiar program (host + divine + enact) matches the interpreter under the same seed (Mock) <!-- codegen.rs familiar_lowers_like_a_function -->
 
 ## 2. Runtime values: list + embedding (RC heap)
 
