@@ -70,6 +70,17 @@ fn missing_file_fails_gracefully() {
 }
 
 #[test]
+fn version_flag_prints_version_and_target() {
+    let out = witch().arg("--version").output().expect("run witch");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("witch "));
+    // The build target triple is reported in parentheses.
+    assert!(stdout.contains('(') && stdout.contains(')'));
+    assert!(!stdout.trim().is_empty());
+}
+
+#[test]
 fn unknown_command_shows_usage() {
     let out = witch().arg("frobnicate").output().expect("run witch");
     assert!(!out.status.success());

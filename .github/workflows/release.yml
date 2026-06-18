@@ -1,0 +1,112 @@
+name: Release
+
+# Build self-contained binaries for every supported platform on a version tag,
+# gate on the test suite, and publish archives + checksums as release assets.
+# This workflow is the ONLY place Rust is required; users download the results.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-build tooling (Linux musl)
+        if: contains(matrix.target, 'linux-musl')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          cargo install cross --locked
+
+      # musl + aarch64 cross compiles are most reliable via `cross` (containerised
+      # linker). Native targets build directly.
+      - name: Test
+        if: "!contains(matrix.target, 'aarch64-unknown-linux')"
+        run: cargo test --all --release --target ${{ matrix.target }}
+
+      - name: Build
+        if: "!contains(matrix.target, 'aarch64-unknown-linux')"
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Build (cross)
+        if: contains(matrix.target, 'aarch64-unknown-linux')
+        run: cross build --release --locked --target ${{ matrix.target }}
+
+      - name: Package (unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          staging="witch-${{ github.ref_name }}-${{ matrix.target }}"
+          mkdir -p "$staging"
+          cp "target/${{ matrix.target }}/release/witch" "$staging/"
+          cp README.md LICENSE* "$staging/" 2>/dev/null || true
+          tar czf "$staging.tar.gz" "$staging"
+          shasum -a 256 "$staging.tar.gz" > "$staging.tar.gz.sha256"
+
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          staging="witch-${{ github.ref_name }}-${{ matrix.target }}"
+          mkdir -p "$staging"
+          cp "target/${{ matrix.target }}/release/witch.exe" "$staging/"
+          cp README.md "$staging/" 2>/dev/null || true
+          7z a "$staging.zip" "$staging"
+          certutil -hashfile "$staging.zip" SHA256 > "$staging.zip.sha256"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: witch-${{ matrix.target }}
+          path: |
+            witch-*.tar.gz*
+            witch-*.zip*
+
+  publish:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Combine checksums
+        run: cat dist/*.sha256 > dist/SHA256SUMS || true
+
+      - name: Create / update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/SHA256SUMS
+          generate_release_notes: true

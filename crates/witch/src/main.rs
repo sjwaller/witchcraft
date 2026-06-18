@@ -34,8 +34,18 @@ fn main() -> ExitCode {
 
 const USAGE: &str = "\
 usage:
-  witch check <file.witch>
-  witch run   <file.witch> [--seed <n>]";
+  witch check   <file.witch>
+  witch run     <file.witch> [--seed <n>]
+  witch --version";
+
+/// The toolchain version and the triple it was built for.
+fn version_string() -> String {
+    format!(
+        "witch {} ({})",
+        env!("CARGO_PKG_VERSION"),
+        env!("WITCH_TARGET")
+    )
+}
 
 enum CliError {
     Usage(String),
@@ -48,6 +58,7 @@ fn run(args: &[String]) -> Result<String, CliError> {
         .ok_or_else(|| CliError::Usage("error: missing command".to_string()))?;
 
     match cmd.as_str() {
+        "--version" | "-V" | "version" => Ok(format!("{}\n", version_string())),
         "check" => {
             let file = positional(args)?;
             let src = read(&file)?;

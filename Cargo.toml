@@ -7,3 +7,11 @@ version = "0.1.0"
 edition = "2021"
 license = "CC-BY-4.0"
 repository = "https://github.com/sjwaller/witchcraft"
+
+# Small, self-contained release binaries for distribution.
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

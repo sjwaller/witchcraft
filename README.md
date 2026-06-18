@@ -52,23 +52,57 @@ What the compiler guarantees here, statically:
   actions are compile errors.
 - provenance (oracle, model, seed) threads through to the enacted action.
 
-## Build and run
+## Install
 
-Requires a recent Rust toolchain (`cargo`).
+Witchcraft is a first-class, standalone language: install the `witch` toolchain
+and you can write, check, and run `.witch` programs with **no Rust and no other
+toolchain**. (Rust is only how the maintainers build the binaries — like C is for
+CPython.) Prebuilt binaries are published for macOS, Linux, and Windows.
 
 ```bash
-cargo build
-cargo test
+# install script (macOS / Linux): downloads + checksum-verifies a prebuilt binary
+curl -fsSL https://raw.githubusercontent.com/sjwaller/witchcraft/main/scripts/install.sh | sh
 
+# or Homebrew
+brew install sjwaller/tap/witchcraft
+
+# or download an archive from the Releases page, extract, and put `witch` on PATH
+```
+
+Verify:
+
+```bash
+witch --version          # e.g. witch 0.1.0 (aarch64-apple-darwin)
+witch run example.witch  # runs offline, deterministically, no config
+```
+
+A freshly installed binary runs every example offline using the bundled
+deterministic decoder — no network and no inference backend required. Real model
+backends are an optional, separate deployment choice, never an install
+dependency.
+
+## Usage
+
+```bash
 # parse + type-check only (never executes)
-cargo run -p witch -- check examples/triage.witch
+witch check examples/triage.witch
 
 # type-check, then run with a fixed seed (fully reproducible)
-cargo run -p witch -- run examples/triage.witch --seed 1
+witch run examples/triage.witch --seed 1
 ```
 
 `witch check` exits non-zero on any error and never executes code. `witch run`
 refuses to run an ill-typed program.
+
+## Build from source (contributors only)
+
+End users do not need this. Requires a recent Rust toolchain (`cargo`).
+
+```bash
+cargo build
+cargo test
+cargo run -p witch -- run examples/triage.witch --seed 1
+```
 
 ## Determinism
 
