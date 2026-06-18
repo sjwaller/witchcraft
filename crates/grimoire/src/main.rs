@@ -104,12 +104,17 @@ fn build(args: &[String]) -> Result<String, CliError> {
 }
 
 /// Link the compiled object with the embedded runtime into a single native
-/// executable, via the system C compiler driver (which supplies crt0 + libc).
+/// executable, via a C compiler driver (which supplies crt0 + libc).
 ///
-/// Note: per the design, the toolchain-free goal calls for a *bundled* linker
-/// (`lld`); using the system `cc` is the documented fallback. Bundling lld is a
-/// distribution refinement tracked separately; functionally the produced binary
-/// is already self-contained (no Rust, no source) once linked.
+/// The driver and linker are a configurable seam:
+///   * `GRIMOIRE_CC` (or `CC`) selects the compiler driver (default `cc`).
+///   * `GRIMOIRE_FUSE_LD` (e.g. `lld`) passes `-fuse-ld=<value>`.
+///
+/// The design's "no toolchain on the build machine" goal ultimately calls for a
+/// *bundled* `lld` (so the system `cc` is not required). That binary bundling —
+/// and the per-platform SDK handling it implies (e.g. `libSystem` on macOS) — is
+/// a packaging concern owned by the distribution change; this seam is where it
+/// plugs in. The produced binary is already self-contained (no Rust, no source).
 fn link_executable(object: &[u8], out_path: &Path) -> Result<(), String> {
     let work = TempDir::new()?;
     let obj_path = work.path.join("program.o");
@@ -117,8 +122,13 @@ fn link_executable(object: &[u8], out_path: &Path) -> Result<(), String> {
     std::fs::write(&obj_path, object).map_err(|e| format!("writing object: {e}"))?;
     std::fs::write(&lib_path, RUNTIME_LIB).map_err(|e| format!("writing runtime: {e}"))?;
 
-    let linker = std::env::var("CC").unwrap_or_else(|_| "cc".to_string());
-    let mut cmd = Command::new(&linker);
+    let driver = std::env::var("GRIMOIRE_CC")
+        .or_else(|_| std::env::var("CC"))
+        .unwrap_or_else(|_| "cc".to_string());
+    let mut cmd = Command::new(&driver);
+    if let Ok(fuse_ld) = std::env::var("GRIMOIRE_FUSE_LD") {
+        cmd.arg(format!("-fuse-ld={fuse_ld}"));
+    }
     cmd.arg(&obj_path)
         .arg(&lib_path)
         .arg("-o")
@@ -127,7 +137,7 @@ fn link_executable(object: &[u8], out_path: &Path) -> Result<(), String> {
 
     let output = cmd
         .output()
-        .map_err(|e| format!("could not run linker `{linker}`: {e}"))?;
+        .map_err(|e| format!("could not run linker `{driver}`: {e}"))?;
     if !output.status.success() {
         return Err(format!(
             "linking failed:\n{}",

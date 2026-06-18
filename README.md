@@ -123,9 +123,11 @@ type-constrained effect** — a green compile is still structural, not semantic
 (see below). `grimoire build` refuses ill-typed programs (no artifact, non-zero
 exit).
 
-> Linking currently drives the system C compiler (`cc`) to produce the final
-> executable; the runtime itself is carried inside `grimoire`. Bundling a linker
-> (`lld`) so no system toolchain is needed at all is a distribution refinement.
+> Linking drives a C compiler driver (`cc` by default) to produce the final
+> executable; the runtime itself is carried inside `grimoire`. The driver/linker
+> is a configurable seam (`GRIMOIRE_CC`, `GRIMOIRE_FUSE_LD=lld`). *Bundling* a
+> linker so no system toolchain is needed at all — and the per-platform SDK
+> handling that implies — is a distribution refinement.
 
 ## Build from source (contributors only)
 
