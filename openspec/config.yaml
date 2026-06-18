@@ -26,8 +26,30 @@ context: |
   during decoding, returning a value that carries confidence + provenance, discharged via
   `with confidence >= θ ... fallback`, executed via `enact` (exhaustive over variants).
 
+  FIRST-CLASS LANGUAGE (non-negotiable):
+  - Witchcraft is a STANDALONE, first-class programming language with its own toolchain —
+    people download it, install it, write `.witch` programs, and produce standalone
+    executables. It is NOT an embedded DSL, NOT a Rust macro/library, NOT a framework or a
+    "layer on top of Rust." Users never see, write, link, or install Rust. The fact that
+    the compiler/runtime happens to be implemented in Rust is an implementation detail with
+    no more user-visible consequence than CPython being written in C or the Go toolchain
+    being written in Go. If a design ever requires the user to touch Rust/Cargo, it is wrong.
+
   Implementation strategy (decided):
-  - Implementation language: Rust. Tree-walking interpreter for the host language.
+  - Implementation language: Rust. Rust is a BUILD-TIME dependency for maintainers ONLY.
+    End users install prebuilt `witch`/`grimoire` binaries and NEVER need Rust (or any
+    other toolchain) to write, check, run, build, or compile Witchcraft programs — the
+    same model as Go/Zig/Deno. See change `add-distribution`.
+  - Witchcraft is a COMPILED language. The v0.1 tree-walking interpreter is the BOOTSTRAP
+    and the dev loop (`witch run`, like `go run`), not the end state. The shared front-end
+    (lexer, parser, type checker, type->grammar compiler) was built to survive the move to
+    a code-generating backend (`grimoire build` -> native/WASM artifact). See change
+    `add-grimoire-codegen`.
+  - Compilation is AOT for the HOST language only. The AI-native operations (`divine`,
+    `oracle`, `enact`) ALWAYS retain a runtime component: the litmus test means inference
+    IS the computation at that moment. Compilation embeds the compiled grammar at each
+    `divine` site and emits a call into the runtime decoder; it never resolves inference at
+    build time. Compiled artifacts carry the decoder + runtime and need no Rust to run.
   - The differentiator is the TYPE SYSTEM + constrained decoding, NOT a string-returning
     oracle. Build those, not sugar.
   - Determinism comes from a DETERMINISTIC, GRAMMAR-RESPECTING decoder (seeded), NOT from
