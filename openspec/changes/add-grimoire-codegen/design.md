@@ -59,18 +59,28 @@ The interpreter is **retained**, not deleted — it is the fast-iteration path (
 ### D7: No Rust at the user boundary (shared with `add-distribution`)
 This change makes a Rust-free *run* of compiled artifacts true; `add-distribution` makes a Rust-free *install of the toolchain itself* true (prebuilt `witch`/`grimoire`). Together they satisfy "install once → write/run/build/compile, no Rust." Stated here so the boundary between the two changes is explicit.
 
+### D8: Host value memory model — reference counting (DECIDED)
+The compiled runtime represents a host value as a small **tagged union**: scalars (`spark`, `bool`, unit) are **unboxed**; heap payloads (`glyph` text, `record`/`variant` field arrays, and the boxed inner value + provenance of `Inferred<T>`) are **reference-counted**. When a value's count reaches zero its payload is freed and its children are decremented.
+
+**Why reference counting (not arena, not tracing GC):**
+- **Witchcraft host values are immutable and acyclic** — there is no construct that creates a mutable reference or a cycle (records/variants are built bottom-up from existing values; nothing can point back). Acyclicity is exactly the precondition under which reference counting is **complete**: no cycle collector is ever needed.
+- **It reclaims loop-local memory.** A bump **arena per run** was considered and rejected as the default: a bounded program with a large `while` loop (e.g. allocating a `glyph` per iteration) would grow the arena unboundedly. Refcounting frees each iteration's values as they fall out of scope.
+- **A tracing GC is unjustified** — it exists to reclaim cycles, which cannot occur here; it would add a runtime and pauses for no benefit.
+
+**Kept reversible:** allocation/retain/release go through a **narrow runtime interface**, so a later **region/arena fast-path for hot bounded scopes** (e.g. a single `divine`/`familiar` pass) can be added as an optimization without changing codegen or the value representation. The interpreter and the compiled runtime SHALL share the same logical value semantics so the D6 equivalence holds.
+
+**Named reopening trigger:** introducing **mutable references or cyclic values** into the language (not currently possible) would break acyclicity and force a cycle-aware collector. Nothing else reopens this.
+
 ## Risks / Trade-offs
 
-- **Owning the native value/memory model is non-trivial** (records, variants, provenance-bearing values on the heap) → start with the smallest existing host-language subset, keep the IR value model explicit and small, and pick the simplest workable allocation discipline first (see Open Questions); the interpreter remains the reference for equivalence.
+- **Owning the native value/memory model is non-trivial** → resolved by D8 (reference counting over immutable acyclic values); start with the smallest existing host-language subset, keep the IR value model explicit and small, and lean on the interpreter as the equivalence reference. Refcount inc/dec is noise next to inference cost.
 - **Bundled linker (`lld`) adds maintenance + binary size** → accepted to keep the build machine toolchain-free; system-linker fallback exists if a platform needs it.
 - **Compiled vs interpreted semantic drift** → mitigated by the D6 equivalence conformance suite run in CI on every example.
 - **Embedding grammars bloats artifacts** → grammars for v0.1 types are tiny (finite variants, integer ranges, bounded text); revisit only if richer types arrive.
 - **"Compiled" overclaim** → be honest in docs: the host language is AOT; inference is a runtime, type-constrained effect. A green compile is still structural, not semantic (§8).
-- **Memory model / value representation work for a real backend** (records, variants, provenance-carrying values) is non-trivial → keep the IR value model explicit and small; lower only existing constructs.
 
 ## Open Questions
 
-- **Host value memory model** (now the central open question): how are records/variants/provenance-bearing values represented and freed in the native target — arena per run, reference counting, or a simple tracing collector? (Lean: start with an arena/region tied to call scope, or refcount, reusing patterns from the Rust runtime; defer a real GC.)
 - **Bundled linker mechanics:** ship `lld` via the `lld`-as-library route vs a vendored binary; what is the per-platform integration cost? (Decision is *that* we bundle, D2; *how* is open.)
 - **Oracle adapter ABI (native):** the minimal in-process interface for a real backend behind the decoder seam (grammar in → value + confidence + provenance out), so v0.2 backends attach without codegen changes.
 - **Artifact entry/CLI:** does a compiled executable accept `--seed` and program args like `witch run` (argv vs env)?
