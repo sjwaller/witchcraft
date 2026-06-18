@@ -86,6 +86,12 @@ pub fn resolve_type(te: &TypeExpr, types: &HashMap<String, Type>) -> Result<Type
 struct Checker {
     types: HashMap<String, Type>,
     scopes: Vec<Vec<(String, Type)>>,
+    /// Capabilities each `fn` declares it requires of its callers. Built before
+    /// checking so call-site requirements resolve regardless of definition order.
+    fn_requires: HashMap<String, Vec<Capability>>,
+    /// Capabilities granted in the context currently being checked. A `fn` body
+    /// starts with its declared `requires`; a `with grant` region appends to it.
+    active_caps: Vec<Capability>,
     diags: Vec<Diagnostic>,
 }
 
@@ -94,6 +100,8 @@ impl Checker {
         Checker {
             types: HashMap::new(),
             scopes: vec![Vec::new()],
+            fn_requires: HashMap::new(),
+            active_caps: Vec::new(),
             diags: Vec::new(),
         }
     }
@@ -108,6 +116,13 @@ impl Checker {
                     }
                     Err(d) => self.diags.push(d),
                 }
+            }
+        }
+        // Pass 1b: record every function's required-capability set (part of its
+        // checked signature) so calls are checked transitively, order-free.
+        for item in &prog.items {
+            if let Item::Fn(f) = item {
+                self.fn_requires.insert(f.name.clone(), f.requires.clone());
             }
         }
         // Pass 2: check fns and top-level statements.
@@ -147,8 +162,38 @@ impl Checker {
             };
             self.define(&p.name, t);
         }
+        // The body is checked as if the declared capabilities are granted: the
+        // `requires` clause is the obligation the body discharges onto callers.
+        let saved = std::mem::replace(&mut self.active_caps, f.requires.clone());
         self.check_block(&f.body);
+        self.active_caps = saved;
         self.pop();
+    }
+
+    /// Is a capability currently granted in the active context?
+    fn cap_granted(&self, cap: &Capability) -> bool {
+        self.active_caps.iter().any(|c| c.same(cap))
+    }
+
+    /// Check that calling an operation is permitted: every capability it requires
+    /// must be granted in the active context, or it is a compile-time error.
+    fn check_call_caps(&mut self, callee: &str, span: crate::span::Span) {
+        let required = match self.fn_requires.get(callee) {
+            Some(r) if !r.is_empty() => r.clone(),
+            _ => return,
+        };
+        for cap in &required {
+            if !self.cap_granted(cap) {
+                self.diags.push(Diagnostic::type_error(
+                    format!(
+                        "`{}` requires capability `{}`, which is not granted in this context",
+                        callee,
+                        cap.display()
+                    ),
+                    span,
+                ));
+            }
+        }
     }
 
     fn check_block(&mut self, body: &[Stmt]) {
@@ -218,6 +263,14 @@ impl Checker {
                 arms,
                 span,
             } => self.check_enact(subject, arms, *span),
+            // A grant region adds its capabilities to the active context for the
+            // enclosed body only; they do not leak past the region.
+            Stmt::Grant { caps, body, .. } => {
+                let added = caps.len();
+                self.active_caps.extend(caps.iter().cloned());
+                self.check_block(body);
+                self.active_caps.truncate(self.active_caps.len() - added);
+            }
             Stmt::Expr(e) => {
                 let _ = self.infer(e);
             }
@@ -407,10 +460,13 @@ impl Checker {
                     Lt | Le | Gt | Ge | Eq | Ne | And | Or => Type::Bool,
                 }
             }
-            Expr::Call { args, .. } => {
+            Expr::Call {
+                callee, args, span, ..
+            } => {
                 for a in args {
                     let _ = self.infer(a);
                 }
+                self.check_call_caps(callee, *span);
                 Type::Unknown
             }
             Expr::Method { recv, args, .. } => {

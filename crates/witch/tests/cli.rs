@@ -43,6 +43,23 @@ fn check_passes_on_valid_program() {
 }
 
 #[test]
+fn check_fails_on_ungranted_capability() {
+    // An operation requiring a capability that no enclosing region grants must
+    // fail `witch check` (exit non-zero) and name the missing capability.
+    let path = std::env::temp_dir().join(format!("witch_cap_{}.witch", std::process::id()));
+    std::fs::write(
+        &path,
+        "fn escalate() requires permit(escalate) { print \"e\" }\nescalate()\n",
+    )
+    .expect("write temp program");
+    let out = witch().arg("check").arg(&path).output().expect("run witch");
+    let _ = std::fs::remove_file(&path);
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("permit(escalate)"), "stderr: {stderr}");
+}
+
+#[test]
 fn same_seed_is_reproducible() {
     let run = |seed: &str| {
         let out = witch()

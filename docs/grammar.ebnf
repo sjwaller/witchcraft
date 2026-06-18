@@ -4,8 +4,13 @@
 program        = { item } ;
 item           = fn_decl | type_decl | statement ;
 
-fn_decl        = "fn" ident "(" [ param { "," param } ] ")" [ ":" type ] block ;
+fn_decl        = "fn" ident "(" [ param { "," param } ] ")" [ ":" type ]
+                 [ "requires" capability { "," capability } ] block ;
 param          = ident [ ":" type ] ;
+
+(* A capability identity: a kind plus an optional parameter, e.g.
+   permit(escalate), scope(tenant). Compile-time only; erased before lowering. *)
+capability     = ident [ "(" ident ")" ] ;
 
 type_decl      = "type" ident "=" type ;
 type           = record_type | sum_type | refined | named ;
@@ -20,7 +25,7 @@ block          = "{" { statement } "}" ;
 
 statement      = let_stmt | var_stmt | assign | print_stmt
                | while_stmt | if_stmt | return_stmt
-               | summon_stmt | divine_stmt | enact_stmt | expr ;
+               | summon_stmt | divine_stmt | enact_stmt | grant_stmt | expr ;
 
 let_stmt       = "let" ident [ ":" type ] "=" expr ;
 var_stmt       = "var" ident [ ":" type ] "=" expr ;
@@ -40,6 +45,9 @@ divine_stmt    = "divine" ident ":" type
 
 enact_stmt     = "enact" expr "{" { enact_arm } "}" ;
 enact_arm      = ident [ "(" [ ident { "," ident } ] ")" ] "=>" block [ "," ] ;
+
+(* Grants its capabilities to the enclosed region. Compile-time only. *)
+grant_stmt     = "with" "grant" capability { "," capability } block ;
 
 (* Expressions, lowest to highest precedence. *)
 expr           = or_expr ;

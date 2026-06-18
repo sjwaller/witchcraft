@@ -89,6 +89,7 @@ fn collect_oracles(prog: &Program, ctx: &mut LowerCtx) {
                         walk(&a.body, ctx);
                     }
                 }
+                Stmt::Grant { body, .. } => walk(body, ctx),
                 _ => {}
             }
         }
@@ -247,6 +248,12 @@ impl LowerCtx {
             }
             Stmt::Enact { subject, arms, .. } => {
                 self.lower_enact(fb, subject, arms)?;
+                fb.clear_last_value();
+            }
+            // Capabilities are erased before codegen: a grant region lowers to
+            // its body as an ordinary lexical block.
+            Stmt::Grant { body, .. } => {
+                self.lower_block(fb, body)?;
                 fb.clear_last_value();
             }
             Stmt::Expr(e) => {

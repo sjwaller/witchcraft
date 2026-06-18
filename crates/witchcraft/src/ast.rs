@@ -19,8 +19,36 @@ pub struct FnDecl {
     pub name: String,
     pub params: Vec<Param>,
     pub ret: Option<TypeExpr>,
+    /// Capabilities this function requires of its callers (`requires <cap>, ...`).
+    /// Compile-time only; erased before lowering.
+    pub requires: Vec<Capability>,
     pub body: Vec<Stmt>,
     pub span: Span,
+}
+
+/// A capability identity: a `kind` plus an optional `param`
+/// (e.g. `permit(escalate)`, `scope(tenant)`). Two capabilities are the same
+/// only when both kind and param match.
+#[derive(Clone, Debug)]
+pub struct Capability {
+    pub kind: String,
+    pub param: Option<String>,
+    pub span: Span,
+}
+
+impl Capability {
+    /// Human-readable identity, e.g. `permit(escalate)` or `scope`.
+    pub fn display(&self) -> String {
+        match &self.param {
+            Some(p) => format!("{}({})", self.kind, p),
+            None => self.kind.clone(),
+        }
+    }
+
+    /// Structural equality of identity (ignores span).
+    pub fn same(&self, other: &Capability) -> bool {
+        self.kind == other.kind && self.param == other.param
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -117,6 +145,13 @@ pub enum Stmt {
     Enact {
         subject: Expr,
         arms: Vec<EnactArm>,
+        span: Span,
+    },
+    /// `with grant <caps> { ... }` — grants capabilities to the enclosed region.
+    /// Compile-time only; erased to its body before lowering.
+    Grant {
+        caps: Vec<Capability>,
+        body: Vec<Stmt>,
         span: Span,
     },
     Return {

@@ -132,14 +132,42 @@ impl Parser {
         } else {
             None
         };
+        let requires = if self.eat(&TokenKind::Requires) {
+            self.capability_list()?
+        } else {
+            Vec::new()
+        };
         let body = self.block()?;
         Ok(FnDecl {
             name,
             params,
             ret,
+            requires,
             body,
             span,
         })
+    }
+
+    /// One or more comma-separated capabilities: `kind(param), kind, ...`.
+    fn capability_list(&mut self) -> Result<Vec<Capability>, Diagnostic> {
+        let mut caps = vec![self.capability()?];
+        while self.eat(&TokenKind::Comma) {
+            caps.push(self.capability()?);
+        }
+        Ok(caps)
+    }
+
+    /// A single capability: `kind` or `kind(param)`.
+    fn capability(&mut self) -> Result<Capability, Diagnostic> {
+        let (kind, span) = self.expect_ident("a capability kind")?;
+        let param = if self.eat(&TokenKind::LParen) {
+            let (p, _) = self.expect_ident("a capability parameter")?;
+            self.expect(TokenKind::RParen, "`)` to close the capability parameter")?;
+            Some(p)
+        } else {
+            None
+        };
+        Ok(Capability { kind, param, span })
     }
 
     fn type_decl(&mut self) -> Result<TypeDecl, Diagnostic> {
@@ -328,6 +356,13 @@ impl Parser {
                     Some(self.expr()?)
                 };
                 Ok(Stmt::Return { value, span })
+            }
+            TokenKind::With => {
+                self.bump();
+                self.expect(TokenKind::Grant, "`grant` (the capabilities to grant)")?;
+                let caps = self.capability_list()?;
+                let body = self.block()?;
+                Ok(Stmt::Grant { caps, body, span })
             }
             TokenKind::Divine => self.divine_stmt(),
             TokenKind::Enact => self.enact_stmt(),

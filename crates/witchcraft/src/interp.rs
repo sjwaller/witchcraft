@@ -194,6 +194,9 @@ impl Interp {
                 arms,
                 span,
             } => self.exec_enact(subject, arms, *span),
+            // Capabilities are compile-time only; at run time a grant region is
+            // an ordinary lexical block.
+            Stmt::Grant { body, .. } => self.exec_block(body),
             Stmt::Expr(e) => {
                 let v = self.eval(e)?;
                 Ok(Exec::Value(v))

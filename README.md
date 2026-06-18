@@ -147,6 +147,38 @@ network access. The same `--seed` always produces the same output, which is what
 makes the litmus and fault-injection tests reproducible. Real model backends
 implement the same trait in a later version with no caller changes.
 
+## Capabilities (the compile-time effect discipline)
+
+Some operations should only be legal inside a context that has been granted the
+right permission. Witchcraft expresses this as a **capability/effect discipline**
+checked entirely at compile time — the substrate the forthcoming `memory` (scope)
+and `familiar` (permits) primitives specialise, built once so they cannot drift
+into two divergent checkers.
+
+- A function declares what it needs with `requires`, and a `with grant` region
+  makes capabilities available to the code inside it:
+
+```
+fn escalate() requires permit(escalate) { print "escalated to a human" }
+
+with grant permit(escalate) {
+    escalate()        // ok: the capability is granted here
+}
+
+escalate()            // compile error: permit(escalate) is not granted
+```
+
+- A capability is a **kind plus an optional parameter** (`permit(escalate)`,
+  `scope(tenant)`), so `scope(tenant)` and `scope(user)` are distinct.
+- Requirements are **transitive**: calling a `requires` function obliges the
+  caller to grant the capability or re-declare the same `requires`.
+- Capabilities are **erased before runtime** — they change what *compiles*, never
+  what executes; a granted program runs identically to one with the scaffolding
+  removed (compiled and interpreted output match).
+
+Capability checking is **structural**: a passing check says an operation is
+*permitted* in its context, never that performing it is *wise* (§8).
+
 ## A green build is structural, not a correctness guarantee
 
 This cannot be overstated (paper §8): the compiler verifies **structural**

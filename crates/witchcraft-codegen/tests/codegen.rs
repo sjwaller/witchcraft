@@ -214,6 +214,43 @@ print \"end\"
     );
 }
 
+// ---------- capabilities are erased at run time ----------
+
+#[test]
+fn capabilities_are_erased_and_compiled_matches_interpreter() {
+    // `requires` / `with grant` carry no runtime behaviour: a granted program
+    // compiles, runs, and matches the interpreter.
+    let src = "\
+fn escalate(): glyph requires permit(escalate) { \"escalated\" }
+with grant permit(escalate) {
+    print escalate()
+}
+print \"done\"
+";
+    assert_equivalent(src);
+    assert_eq!(compiled(src, 0), "escalated\ndone\n");
+}
+
+#[test]
+fn grant_region_compiles_to_its_body() {
+    // The same program with the capability scaffolding removed produces identical
+    // output — proving the grant region erases to a plain block.
+    let with_caps = "\
+fn act(): glyph requires permit(escalate), scope(tenant) { \"acted\" }
+var n = 0
+with grant permit(escalate), scope(tenant) {
+    while n < 3 { print \"${n}:${act()}\" n = n + 1 }
+}
+";
+    let stripped = "\
+fn act(): glyph { \"acted\" }
+var n = 0
+while n < 3 { print \"${n}:${act()}\" n = n + 1 }
+";
+    assert_eq!(compiled(with_caps, 0), compiled(stripped, 0));
+    assert_eq!(compiled(with_caps, 0), interpreted(with_caps, 0));
+}
+
 #[test]
 fn loop_local_heap_is_reclaimed_in_compiled_code() {
     // A glyph is allocated each iteration (via interpolation) and printed. The

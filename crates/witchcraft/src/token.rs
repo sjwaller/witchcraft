@@ -48,6 +48,10 @@ pub enum TokenKind {
     With,
     Confidence,
 
+    // Capability / effect keywords
+    Requires,
+    Grant,
+
     // Boolean / logical operators
     And,
     Or,
@@ -115,6 +119,8 @@ pub fn keyword(ident: &str) -> Option<TokenKind> {
         "using" => TokenKind::Using,
         "with" => TokenKind::With,
         "confidence" => TokenKind::Confidence,
+        "requires" => TokenKind::Requires,
+        "grant" => TokenKind::Grant,
         "and" => TokenKind::And,
         "or" => TokenKind::Or,
         "not" => TokenKind::Not,
