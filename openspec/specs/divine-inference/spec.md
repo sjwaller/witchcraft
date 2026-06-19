@@ -4,7 +4,7 @@
 TBD - created by archiving change bootstrap-language-core. Update Purpose after archive.
 ## Requirements
 ### Requirement: divine resolves a typed inference region
-A `divine <name>: <OutputType> from (<inputs>) using <oracle>` block SHALL request that the oracle produce a value inhabiting `<OutputType>`, constrained during generation by that type (see constrained-decoder). The result SHALL be an `Inferred<OutputType>`. The `<inputs>` SHALL be evaluated in the enclosing scope before generation.
+A `divine <name>: <OutputType> from (<inputs>) using <oracle>` block SHALL request that the oracle produce a value inhabiting `<OutputType>`, constrained during generation by that type (see constrained-decoder). When the output type contains a bounded list field, the bound engine SHALL generate that field within its declared bounds during decoding. The result SHALL be an `Inferred<OutputType>`. The `<inputs>` SHALL be evaluated in the enclosing scope before generation.
 
 #### Scenario: divine produces an inferred value of the declared type
 - **WHEN** `divine decision: Disposition from (msg) using triage ...` executes
@@ -13,6 +13,10 @@ A `divine <name>: <OutputType> from (<inputs>) using <oracle>` block SHALL reque
 #### Scenario: Inputs are evaluated before generation
 - **WHEN** an input expression to `divine` is `"Explain ${topic}"` and `topic` is `tides`
 - **THEN** the oracle receives the resolved input `Explain tides`
+
+#### Scenario: Divine produces record with list field
+- **WHEN** a `divine t: Turn` site runs and discharge succeeds
+- **THEN** `t.exits` is a list value whose length is within the declared bounds and whose elements inhabit the declared element type
 
 ### Requirement: Confidence discharge and fallback
 A `divine` block SHALL include a `with confidence >= <θ>` discharge and a `fallback <expr>`. When the inferred confidence meets the threshold, the block SHALL yield the value as a plain `<OutputType>`; otherwise it SHALL evaluate the `fallback` and the underlying value SHALL NOT flow downstream.
