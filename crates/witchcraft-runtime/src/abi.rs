@@ -413,24 +413,106 @@ pub extern "C" fn w_set_seed(seed: u64) {
 /// `argv` must be a valid array of `argc` C strings (the standard `main` ABI).
 #[no_mangle]
 pub unsafe extern "C" fn w_parse_seed(argc: i32, argv: *const *const std::os::raw::c_char) -> u64 {
+    match c_flag_value(argc, argv, "--seed") {
+        Some(s) => s.parse::<u64>().unwrap_or(0),
+        None => 0,
+    }
+}
+
+/// Resolve the program's inference needs against a deployment manifest at process
+/// start (the compiled engine-swap), exactly as `witch run --manifest` and the
+/// JIT path do. The standalone entry calls this after the seed is set:
+///   * with `--manifest <path>` in `argv`, the manifest is installed and every
+///     embedded need is resolved under its policy — an unsatisfiable policy
+///     (e.g. a network engine without `permit(network)`) makes the process
+///     **refuse to start** (message to stderr, exit code 1);
+///   * with no `--manifest`, any binding is cleared and the built-in Mock serves
+///     each need (the offline default, byte-identical to the interpreter).
+///
+/// `needs_ptr`/`needs_len` is the codegen-embedded needs blob (see
+/// [`crate::encode_needs`]). Models are named only in the manifest.
+///
+/// # Safety
+/// `argv` must be the standard `main` ABI; `needs_ptr`/`needs_len` must describe
+/// a blob produced by [`crate::encode_needs`].
+#[cfg(feature = "engines")]
+#[no_mangle]
+pub unsafe extern "C" fn w_setup_manifest(
+    argc: i32,
+    argv: *const *const std::os::raw::c_char,
+    needs_ptr: *const u8,
+    needs_len: usize,
+) {
+    match c_flag_value(argc, argv, "--manifest") {
+        Some(path) => {
+            let src = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+                eprintln!("error: cannot read manifest `{path}`: {e}");
+                std::process::exit(1);
+            });
+            if let Err(e) = crate::engines::set_manifest(&src) {
+                eprintln!("error: {e}");
+                std::process::exit(1);
+            }
+            let needs = crate::decode_needs(std::slice::from_raw_parts(needs_ptr, needs_len));
+            if let Err(e) = crate::engines::resolve_needs(&needs) {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        }
+        None => crate::engines::clear(),
+    }
+}
+
+/// Mock-only build: there is no engine bridge, so a `--manifest` request cannot
+/// be honoured — refuse loudly rather than silently ignoring the binding.
+///
+/// # Safety
+/// `argv` must be the standard `main` ABI.
+#[cfg(not(feature = "engines"))]
+#[no_mangle]
+pub unsafe extern "C" fn w_setup_manifest(
+    argc: i32,
+    argv: *const *const std::os::raw::c_char,
+    _needs_ptr: *const u8,
+    _needs_len: usize,
+) {
+    if c_flag_value(argc, argv, "--manifest").is_some() {
+        eprintln!(
+            "error: this binary has no engine support (Mock only); rebuild grimoire with \
+             `--features llama` and/or `frontier` to bind a manifest"
+        );
+        std::process::exit(1);
+    }
+}
+
+/// Read the value following `flag` in a C `argv`, if present.
+///
+/// # Safety
+/// `argv` must be a valid array of `argc` C strings (the standard `main` ABI).
+unsafe fn c_flag_value(
+    argc: i32,
+    argv: *const *const std::os::raw::c_char,
+    flag: &str,
+) -> Option<String> {
     if argv.is_null() {
-        return 0;
+        return None;
     }
     let n = argc.max(0) as isize;
     let mut i = 0isize;
     while i < n {
         let arg = *argv.offset(i);
-        if !arg.is_null() && std::ffi::CStr::from_ptr(arg).to_bytes() == b"--seed" && i + 1 < n {
+        if !arg.is_null()
+            && std::ffi::CStr::from_ptr(arg).to_bytes() == flag.as_bytes()
+            && i + 1 < n
+        {
             let val = *argv.offset(i + 1);
             if !val.is_null() {
                 if let Ok(s) = std::ffi::CStr::from_ptr(val).to_str() {
-                    if let Ok(parsed) = s.parse::<u64>() {
-                        return parsed;
-                    }
+                    return Some(s.to_string());
                 }
             }
         }
         i += 1;
     }
-    0
+    None
 }

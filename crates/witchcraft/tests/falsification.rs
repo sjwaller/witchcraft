@@ -211,6 +211,22 @@ fn real_llama_masks_tokens_during_generation() {
         "weakened generation  (free to leave the type) : {:?}",
         weak_out.value
     );
+    // The confidence is now read from the sampler (the geometric mean of the
+    // masked probability the model assigned each chosen token), not a 1.0
+    // placeholder. It is a genuine probability in (0, 1].
+    eprintln!(
+        "real-type confidence (sampler chosen-token prob, geom-mean): {}",
+        real_out.confidence
+    );
+    eprintln!(
+        "weakened confidence  (sampler chosen-token prob, geom-mean): {}",
+        weak_out.confidence
+    );
+    assert!(
+        real_out.confidence > 0.0 && real_out.confidence <= 1.0,
+        "confidence must be a real probability in (0, 1], got {}",
+        real_out.confidence
+    );
     if let Some(w) = &outcome.witness {
         eprintln!("witness.step           : {}", w.step);
         eprintln!("witness.forbidden_token: {:?}", w.forbidden_token);

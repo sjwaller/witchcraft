@@ -10,6 +10,21 @@ repository.workspace = true
 name = "grimoire"
 path = "src/main.rs"
 
+[features]
+# Default ship path: a self-contained, Mock-only artifact (dependency-free
+# runtime staticlib built by bare `rustc`). Real engines are opt-in and make the
+# produced binary link the full engine runtime (so a built executable can run
+# real grammar-constrained inference selected by manifest).
+default = []
+engines = ["witchcraft-runtime/engines", "witchcraft-codegen/engines"]
+llama = ["engines", "witchcraft-runtime/llama", "witchcraft-codegen/llama", "witchcraft/llama"]
+frontier = [
+    "engines",
+    "witchcraft-runtime/frontier",
+    "witchcraft-codegen/frontier",
+    "witchcraft/frontier",
+]
+
 [dependencies]
 witchcraft = { path = "../witchcraft" }
 witchcraft-codegen = { path = "../witchcraft-codegen" }

@@ -36,7 +36,7 @@
 
 - [x] 6.1 Add the llama.cpp FFI dependency (link `libllama`, confined to model execution; CI builds it; default tests stay on Mock) <!-- llama-cpp-2 0.1.150 behind --features llama; cmake + C++ toolchain build verified locally -->
 - [x] 6.2 Map our `Grammar` → GBNF (variants → alternation, refined int → bounded numeric, glyph → bounded text, records → ordered fields); report unmappable features as "cannot serve this need" (refuse, never downgrade) <!-- engine::grammar_to_gbnf; exercised by real llama sampler -->
-- [~] 6.3 Implement `infer` with GBNF token-by-token constraint; fill provenance (`model_id`, `model_version_or_sha = manifest sha256`, `backend_id`, seed, sampling) <!-- llama.rs generate(): real GBNF chain (grammar mask + dist) drives token-by-token decode; provenance filled. Confidence still placeholder (1.0): logprob extraction NOT yet wired -->
+- [x] 6.3 Implement `infer` with GBNF token-by-token constraint; fill provenance (`model_id`, `model_version_or_sha = manifest sha256`, `backend_id`, seed, sampling) and a real confidence from the sampler <!-- llama.rs generate(): real GBNF chain (grammar mask + dist) drives token-by-token decode; provenance filled. Confidence now the geometric mean of the chosen-token masked probability, read via a lockstep probe grammar sampler (no double-accept); live witness 0.568 in-type vs 0.044 weakened -->
 - [x] 6.4 Implement `embed` behind the engine (Mock reuses the deterministic embedding; default trait method) <!-- engine embed; mock embed_hash -->
 - [x] 6.5 Tests: real local `divine` of a constrained type yields an in-type value by construction (libllama + real GGUF) <!-- tests/falsification.rs::real_llama_masks_tokens_during_generation, WITCHCRAFT_GGUF -->
 
@@ -49,8 +49,11 @@
 > to free text (`"of 94.108, heav"`). A double-accept bug (llama_sampler_sample accepts
 > internally) was found and fixed. Run:
 > `WITCHCRAFT_GGUF=$PWD/models/<m>.gguf cargo test --features llama real_llama -- --nocapture`.
-> Remaining honest gap (6.3): confidence is still a placeholder 1.0 — per-token logprob
-> extraction is not yet wired. §8 holds: this proves the type masks SHAPE, never quality.
+> Confidence (6.3) is now REAL: the geometric mean of the masked probability the sampler
+> assigned each chosen token, read via a second grammar sampler advanced in lockstep (so the
+> generation chain is never double-accepted). Live witness: 0.568 (in-type) vs 0.044
+> (weakened), masking litmus still holds. §8 holds: this proves the type masks SHAPE, never
+> quality — the confidence number quantifies the model's own certainty, not correctness.
 
 ## 7. Network engine — frontier API
 

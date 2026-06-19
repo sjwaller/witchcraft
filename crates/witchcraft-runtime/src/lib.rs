@@ -25,6 +25,49 @@ pub mod value;
 
 pub use decode::{decode_grammar, encode, Grammar, GrammarVariant};
 pub use heap::{live_objects, release, retain};
+
+/// Serialise a program's inference needs (intent + policy flags) for embedding in
+/// a compiled artifact, so the standalone entry can resolve them against a
+/// manifest at process start (refuse-to-start). A small, self-describing,
+/// little-endian format — no external dependency, stable across the two sides.
+/// Each entry is `(intent, allow_network, allow_downgrade)`.
+pub fn encode_needs(needs: &[(String, bool, bool)]) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(&(needs.len() as u32).to_le_bytes());
+    for (intent, allow_network, allow_downgrade) in needs {
+        out.extend_from_slice(&(intent.len() as u32).to_le_bytes());
+        out.extend_from_slice(intent.as_bytes());
+        out.push(*allow_network as u8);
+        out.push(*allow_downgrade as u8);
+    }
+    out
+}
+
+/// Reconstruct the needs blob produced by [`encode_needs`].
+pub fn decode_needs(bytes: &[u8]) -> Vec<(String, bool, bool)> {
+    let mut pos = 0usize;
+    let read_u32 = |b: &[u8], p: &mut usize| -> u32 {
+        let mut buf = [0u8; 4];
+        buf.copy_from_slice(&b[*p..*p + 4]);
+        *p += 4;
+        u32::from_le_bytes(buf)
+    };
+    if bytes.len() < 4 {
+        return Vec::new();
+    }
+    let count = read_u32(bytes, &mut pos) as usize;
+    let mut out = Vec::with_capacity(count);
+    for _ in 0..count {
+        let len = read_u32(bytes, &mut pos) as usize;
+        let intent = String::from_utf8(bytes[pos..pos + len].to_vec()).unwrap_or_default();
+        pos += len;
+        let allow_network = bytes[pos] != 0;
+        let allow_downgrade = bytes[pos + 1] != 0;
+        pos += 2;
+        out.push((intent, allow_network, allow_downgrade));
+    }
+    out
+}
 pub use sink::{
     begin_capture, end_capture, force_confidence, seed, set_force_confidence, set_seed,
 };
@@ -160,6 +203,16 @@ mod tests {
         let nullary = variant("Escalate", 1, vec![], None);
         assert_eq!(display(nullary), "Escalate");
         release(nullary);
+    }
+
+    #[test]
+    fn needs_blob_round_trips() {
+        let needs = vec![
+            ("TriageReasoner".to_string(), false, false),
+            ("CloudReasoner".to_string(), true, true),
+        ];
+        assert_eq!(decode_needs(&encode_needs(&needs)), needs);
+        assert!(decode_needs(&[]).is_empty());
     }
 
     #[test]

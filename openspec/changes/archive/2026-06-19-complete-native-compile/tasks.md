@@ -3,32 +3,36 @@
 > model dependency and may land first; compiled `divine`/`embed` and the cross-engine
 > proofs require change A.
 
-> STATUS: Groups 1–7 are **done and tested offline** (Mock byte-equivalence,
-> compiled litmus, governed memory, embeddings, lists, `within`, and the compiled
-> `divine` routed through the *same* `Engine` contract + manifest the interpreter
-> uses). The compiled engine-swap by manifest is proven on the native
-> (Cranelift-JIT) path with the Mock binding — the SAME compiled flagship selects
-> its model purely by manifest, byte-identical to `witch run`, and refuses to
-> start on an unsatisfiable policy.
+> STATUS: Groups 1–8 are **done and tested**. Mock byte-equivalence, compiled
+> litmus, governed memory, embeddings, lists, `within`, and the compiled `divine`
+> routed through the *same* `Engine` contract + manifest the interpreter uses are
+> green offline. The compiled engine-swap by manifest is proven both on the native
+> JIT path and — now — in the **shipped standalone `grimoire build` binary**: the
+> SAME compiled flagship selects Mock (no manifest) or the real local `llama`
+> engine (with a manifest) purely by manifest, with zero source change, and
+> refuses to start on an unsatisfiable policy.
+>
+> LIVE EVIDENCE (qwen2.5-0.5b-instruct, Apple Metal):
+> - `grimoire build --features llama examples/triage_flagship.witch -o triage`
+>   then `./triage --manifest examples/manifests/triage.llama.toml --seed 7`
+>   prints `provenance: … backend=llama … sampling=grammar+dist` — real
+>   GBNF-masked inference in a bare process (no JIT, no test harness). With no
+>   manifest the same binary prints `backend=mock`.
+> - Real confidence is read from the sampler (geometric mean of the chosen-token
+>   masked probability): a live witness shows `0.568` (in-type) vs `0.044`
+>   (weakened), and the masking litmus still holds (the sampler is not
+>   destabilised). The placeholder `1.0` is gone.
 >
 > HONEST BOUNDARIES (§8):
-> - The shipped, self-contained `grimoire` executable stays **Mock-only**: its
->   runtime is a dependency-free `staticlib` built by bare `rustc` (no cargo
->   features), so it cannot pull `witchcraft`/`libllama`/`ureq`. Engine-swap is
->   carried on the JIT-compiled native path (full runtime linked with the
->   `engines` feature), not in the standalone binary. Wiring real engines into
->   the shipped artifact is a packaging follow-up (a cargo-built staticlib or
->   `--extern` rlib bundle), deliberately not attempted in this slice.
-> - The real-engine LIVE acceptance (#3 against llama.cpp + a frontier API) was
->   **not exercised** here: no GGUF model and no API key are available. The
->   `llama` and `frontier` engine-swap tests are feature-gated, compile and run
->   (skipping, with a printed reason) under `--features llama` / `frontier`, and
->   are clippy-clean — but they have not been driven against real weights/keys.
-> - Loose end 6.3 (real per-token logprob → confidence on the llama path) is
->   **left as the placeholder `1.0`**: extracting the chosen-token probability
->   from the current grammar+dist sampler risks the documented double-accept
->   grammar corruption and cannot be verified without a live model. Recorded, not
->   faked. The numeric-range single-token witness remains skipped.
+> - Shape and policy are guaranteed on the compiled path; **correctness is not** —
+>   a green build and a real decode never assert the triage decision is good.
+> - The engine `grimoire` references its real-engine runtime archive (which bundles
+>   `libllama`) by build path rather than embedding it (an 88 MB embed); the
+>   PRODUCED executable is still fully self-contained (engines + `libllama`
+>   statically linked into it, no Rust at run time). The default `grimoire` stays a
+>   dependency-free, embedded, Mock-only staticlib.
+> - The numeric-range single-token witness remains skipped: multi-digit
+>   tokenisation makes the probe unreliable, so no deeper witness is claimed.
 
 ## 1. Familiar lowers as a function (smallest first)
 
@@ -75,12 +79,12 @@
 
 ## 8. Compiled engine-swap (acceptance bar)
 
-- [~] 8.1 The SAME compiled flagship runs against engines selected purely by manifest, zero source change — **proven on the native JIT path with the Mock binding** (laptop vs cloud manifests bind different models; provenance reflects the bind). Real llama + frontier are feature-gated and compile/run (skipping) but were NOT driven live (no GGUF/key); the shipped `grimoire` standalone binary remains Mock-only (see STATUS) <!-- the_same_compiled_flagship_swaps_engine_purely_by_manifest; compiled_flagship_runs_against_real_llama_by_manifest / compiled_divine_runs_against_real_frontier_by_manifest (feature-gated, env-skipped) -->
+- [x] 8.1 The SAME compiled flagship runs against engines selected purely by manifest, zero source change — proven on the JIT path AND in the shipped standalone `grimoire build` binary: built with `--features llama`, the bare executable resolves its need against the manifest and runs real GBNF-masked llama inference (`backend=llama`), and falls back to the Mock with no manifest (`backend=mock`). Driven LIVE against qwen2.5-0.5b <!-- standalone_binary_runs_real_llama_by_manifest (grimoire/tests/build.rs); the_same_compiled_flagship_swaps_engine_purely_by_manifest; compiled_flagship_runs_against_real_llama_by_manifest (env-gated) -->
 - [x] 8.2 Test: compiled output matches the interpreter per engine binding (compiled == interpreted under the same manifest, Mock) <!-- compiled_divine_through_mock_by_manifest_matches_interpreter -->
 
 ## 9. Validation
 
-- [x] 9.1 `cargo fmt --all`, `cargo clippy --workspace` clean (default; and `--features llama` / `frontier` on codegen + witchcraft)
-- [x] 9.2 `cargo test --workspace` green offline (Mock-default); real-engine tests feature-gated and env-skipped like change A
+- [x] 9.1 `cargo fmt --all --check`, `cargo clippy --workspace --all-targets` clean (default; and `--features llama,frontier` across the workspace, incl. grimoire's engine ship path)
+- [x] 9.2 `cargo test --workspace` green offline (Mock-default); real-engine tests feature-gated and env-skipped, and driven LIVE against qwen2.5-0.5b for the standalone-binary and falsification acceptances
 - [x] 9.3 `openspec validate complete-native-compile --strict` clean; every spec scenario maps to a test
-- [x] 9.4 README: the interpreter and native compiler accept the same language; `witch run` is the dev loop; manifest-driven engine swap on the compiled (JIT) native path, with the honest Mock-only-standalone-binary boundary
+- [x] 9.4 README: the interpreter and native compiler accept the same language; `witch run` is the dev loop; manifest-driven engine swap works in the shipped standalone `grimoire build` binary (`--features llama`), Mock-only by default

@@ -77,6 +77,7 @@ struct Runtime {
     audit_log: FuncId,
     parse_seed: FuncId,
     set_seed: FuncId,
+    setup_manifest: FuncId,
 }
 
 /// Knobs for a compiled run, mirroring the interpreter's `RunConfig`.
@@ -290,6 +291,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) {
     builder.symbol("w_audit_log", w_audit_log as *const u8);
     builder.symbol("w_parse_seed", w_parse_seed as *const u8);
     builder.symbol("w_set_seed", w_set_seed as *const u8);
+    builder.symbol("w_setup_manifest", w_setup_manifest as *const u8);
 }
 
 /// Declare the runtime functions and every Witchcraft function, then generate
@@ -327,7 +329,7 @@ fn build<M: Module>(
     )?;
 
     if emit_entry {
-        gen_entry(module, &mut fbctx, &rt, main_id)?;
+        gen_entry(module, &mut fbctx, &rt, prog, main_id)?;
     }
 
     Ok(main_id)
@@ -352,11 +354,15 @@ fn encode_grammars(prog: &ir::Program) -> Vec<Vec<u8>> {
 }
 
 /// Emit the C `main(argc, argv)` entry point: parse `--seed`, seed the runtime,
-/// run `witch_main`, release its result, and return 0.
+/// install the deployment manifest and resolve the program's inference needs
+/// (`--manifest`, refuse-to-start), run `witch_main`, release its result, and
+/// return 0. The needs are embedded in the artifact so the standalone binary
+/// resolves them exactly as the JIT path does — the compiled engine-swap.
 fn gen_entry<M: Module>(
     module: &mut M,
     fbctx: &mut FunctionBuilderContext,
     rt: &Runtime,
+    prog: &ir::Program,
     main_id: FuncId,
 ) -> Result<(), String> {
     let ptr_ty = module.target_config().pointer_type();
@@ -369,14 +375,36 @@ fn gen_entry<M: Module>(
         .declare_function("main", Linkage::Export, &sig)
         .map_err(de)?;
 
+    // Serialise the program's needs (intent + policy) into a read-only data
+    // object the entry passes to `w_setup_manifest`.
+    let needs: Vec<(String, bool, bool)> = prog
+        .needs
+        .iter()
+        .map(|n| (n.intent.clone(), n.allow_network, n.allow_downgrade))
+        .collect();
+    let needs_bytes = witchcraft_runtime::encode_needs(&needs);
+    let needs_data = module
+        .declare_data(
+            &format!("witch_needs_{}", next_data_id()),
+            Linkage::Local,
+            false,
+            false,
+        )
+        .map_err(de)?;
+    let mut needs_desc = DataDescription::new();
+    needs_desc.define(needs_bytes.clone().into_boxed_slice());
+    module.define_data(needs_data, &needs_desc).map_err(de)?;
+
     let mut ctx = module.make_context();
     ctx.func.signature = sig;
     {
         let mut b = FunctionBuilder::new(&mut ctx.func, fbctx);
         let parse_seed = module.declare_func_in_func(rt.parse_seed, b.func);
         let set_seed = module.declare_func_in_func(rt.set_seed, b.func);
+        let setup_manifest = module.declare_func_in_func(rt.setup_manifest, b.func);
         let release = module.declare_func_in_func(rt.release, b.func);
         let witch_main = module.declare_func_in_func(main_id, b.func);
+        let needs_gv = module.declare_data_in_func(needs_data, b.func);
 
         let blk = b.create_block();
         b.append_block_params_for_function_params(blk);
@@ -388,6 +416,17 @@ fn gen_entry<M: Module>(
         let seed_call = b.ins().call(parse_seed, &[argc, argv]);
         let seed = b.inst_results(seed_call)[0];
         b.ins().call(set_seed, &[seed]);
+
+        // Resolve needs against the manifest (refuse-to-start) before running.
+        let needs_ptr = b.ins().global_value(ptr_ty, needs_gv);
+        let needs_ptr = if ptr_ty != I64 {
+            b.ins().uextend(I64, needs_ptr)
+        } else {
+            needs_ptr
+        };
+        let needs_len = b.ins().iconst(I64, needs_bytes.len() as i64);
+        b.ins()
+            .call(setup_manifest, &[argc, argv, needs_ptr, needs_len]);
 
         let main_call = b.ins().call(witch_main, &[]);
         let res = b.inst_results(main_call);
@@ -552,6 +591,13 @@ fn declare_runtime<M: Module>(module: &mut M) -> Result<Runtime, String> {
         vec![i64p()],
     )?;
     let set_seed = import("w_set_seed", vec![i64p()], vec![])?;
+    // (argc, argv, needs_ptr, needs_len); installs the manifest + resolves needs
+    // (refuse-to-start). Used only by the compiled executable entry point.
+    let setup_manifest = import(
+        "w_setup_manifest",
+        vec![AbiParam::new(I32), i64p(), i64p(), i64p()],
+        vec![],
+    )?;
 
     Ok(Runtime {
         glyph,
@@ -582,6 +628,7 @@ fn declare_runtime<M: Module>(module: &mut M) -> Result<Runtime, String> {
         audit_log,
         parse_seed,
         set_seed,
+        setup_manifest,
     })
 }
 

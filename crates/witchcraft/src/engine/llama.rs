@@ -83,8 +83,10 @@ impl LlamaEngine {
     }
 
     /// Generate a grammar-constrained string for the request, returning the raw
-    /// text the GBNF admitted (JSON-ish for aggregates, a bare token for scalars).
-    fn generate(&self, req: &InferRequest) -> Result<String, String> {
+    /// text the GBNF admitted (JSON-ish for aggregates, a bare token for scalars)
+    /// and a real confidence read from the sampler — the geometric mean of the
+    /// probability the masked distribution assigned each chosen token.
+    fn generate(&self, req: &InferRequest) -> Result<(String, f64), String> {
         let ctx_params = LlamaContextParams::default().with_n_ctx(NonZeroU32::new(self.n_ctx));
         let mut ctx = self
             .model
@@ -111,17 +113,39 @@ impl LlamaEngine {
         let mut sampler =
             LlamaSampler::chain_simple([grammar_sampler, LlamaSampler::dist(req.seed as u32)]);
 
+        // A SECOND grammar sampler, advanced in lockstep with the chain, lets us
+        // read the masked distribution at each step to recover the chosen token's
+        // probability — WITHOUT calling `accept` on the generation chain (that
+        // would advance its grammar stacks twice and corrupt them, the documented
+        // double-accept failure). The probe only ever `apply`s + `accept`s itself.
+        let mut probe = LlamaSampler::grammar(&self.model, &gbnf, "root")
+            .map_err(|e| format!("grammar sampler: {e}"))?;
+
         let mut out = String::new();
+        let mut logp_sum = 0.0f64;
+        let mut n_chosen = 0u32;
         let start = tokens.len() as i32;
         for pos in (start..).take(512) {
             let idx = batch.n_tokens() - 1;
-            // `llama_sampler_sample` applies the chain (grammar mask included) AND
-            // accepts the chosen token internally — so we must NOT accept again,
-            // or the grammar advances twice and its stacks corrupt.
+            // Masked candidate distribution at this step (probe state == chain
+            // grammar state, so the mask is identical to the chain's).
+            let mut arr = ctx.token_data_array_ith(idx);
+            arr.apply_sampler(&probe);
+
+            // `llama_sampler_sample` applies the chain (grammar mask + dist) AND
+            // accepts the chosen token internally — so we must NOT accept again on
+            // `sampler`. The probe is advanced separately to stay in step.
             let token = sampler.sample(&ctx, idx);
             if self.model.is_eog_token(token) {
                 break;
             }
+            let p = chosen_probability(&arr, token);
+            if p > 0.0 {
+                logp_sum += (p as f64).ln();
+                n_chosen += 1;
+            }
+            probe.accept(token);
+
             #[allow(deprecated)]
             if let Ok(piece) = self.model.token_to_str(token, Special::Plaintext) {
                 out.push_str(&piece);
@@ -132,7 +156,15 @@ impl LlamaEngine {
                 .map_err(|e| format!("batch: {e}"))?;
             ctx.decode(&mut batch).map_err(|e| format!("decode: {e}"))?;
         }
-        Ok(out)
+        // Geometric mean of per-token probabilities; a sequence confidence in
+        // (0, 1]. With no tokens generated there is no signal — report 1.0 (the
+        // grammar admitted the empty string), never fabricated certainty.
+        let confidence = if n_chosen > 0 {
+            (logp_sum / n_chosen as f64).exp()
+        } else {
+            1.0
+        };
+        Ok((out, confidence))
     }
 
     /// Probe the live grammar mask at the first decode step: for each candidate
@@ -190,13 +222,13 @@ impl Engine for LlamaEngine {
     }
 
     fn infer(&mut self, req: &InferRequest) -> InferResult {
-        let text = self.generate(req).unwrap_or_default();
+        let (text, confidence) = self.generate(req).unwrap_or_default();
         let value = json_to_value(&text, req.grammar)
             .or_else(|| scalar_from_text(&text, req.grammar))
             .unwrap_or_else(|| fallback_value(req.grammar));
         InferResult {
             value,
-            confidence: 1.0,
+            confidence,
             provenance: self.provenance(req.intent_id, req.seed),
         }
     }
@@ -207,6 +239,39 @@ impl Engine for LlamaEngine {
         let chosen = permitted.first().cloned().unwrap_or_default();
         let trace = vec![DecodeStep { permitted, chosen }];
         (result, Some(trace))
+    }
+}
+
+/// The probability the grammar-masked distribution `arr` assigned to `token`:
+/// a softmax over the surviving (finite-logit) candidates. This is exactly the
+/// probability `LlamaSampler::dist` drew the token with, so it is a faithful
+/// per-token confidence — not a re-derivation.
+fn chosen_probability(arr: &LlamaTokenDataArray, token: llama_cpp_2::token::LlamaToken) -> f32 {
+    let max = arr
+        .data
+        .iter()
+        .map(|d| d.logit())
+        .filter(|l| l.is_finite())
+        .fold(f32::NEG_INFINITY, f32::max);
+    if !max.is_finite() {
+        return 0.0;
+    }
+    let mut sum = 0.0f32;
+    let mut chosen = 0.0f32;
+    for d in &arr.data {
+        let l = d.logit();
+        if l.is_finite() {
+            let e = (l - max).exp();
+            sum += e;
+            if d.id() == token {
+                chosen = e;
+            }
+        }
+    }
+    if sum > 0.0 {
+        chosen / sum
+    } else {
+        0.0
     }
 }
 

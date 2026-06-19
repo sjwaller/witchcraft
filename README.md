@@ -110,6 +110,11 @@ grimoire build examples/triage.witch -o triage
 
 # run it like any other executable; --seed is accepted, just like `witch run`
 ./triage --seed 1
+
+# build with a real engine linked in, then select it purely by manifest:
+grimoire build --features llama examples/triage_flagship.witch -o triage
+./triage                                                  # no manifest → Mock
+./triage --manifest examples/manifests/triage.llama.toml  # → real local llama
 ```
 
 The compiled binary and the interpreter produce **identical** output for the same
@@ -123,15 +128,19 @@ interpreter uses (§ *Inference is an effect*, below) — models are named only 
 manifest, the artifact carries only the intent and the output grammar. The native
 binary resolves every need at load and **refuses to start** on an unsatisfiable
 policy, exactly like `witch run`. Selecting Mock / local llama / a frontier engine
-is purely a manifest change, with zero source change.
+is purely a manifest change, with zero source change — and this works in the
+**shipped standalone binary**, not just the dev loop: a `grimoire build --features
+llama` artifact run as a bare process performs real GBNF-masked inference against a
+GGUF model named only in the manifest (`provenance: … backend=llama …`), and falls
+back to the deterministic Mock with no manifest.
 
-> Honest boundary (§8): this engine-swap is carried on the **native code linked
-> with the full runtime** (the JIT path the equivalence tests exercise). The
-> *shipped, self-contained* `grimoire` executable is built against a
-> dependency-free runtime `staticlib` (bare `rustc`, no cargo features) and is
-> therefore **Mock-only** today; bundling real engines into the standalone
-> artifact is a packaging follow-up. Shape and policy are guaranteed on the
-> compiled path; correctness of any inferred value never is.
+> Honest boundary (§8): with an engine feature, the engine `grimoire` references
+> its real-engine runtime archive (which bundles `libllama`) by build path rather
+> than embedding it; the *produced* executable is still fully self-contained
+> (engines + `libllama` statically linked into it, no Rust at run time). The
+> **default** `grimoire` stays a dependency-free, embedded, Mock-only `staticlib`.
+> Shape and policy are guaranteed on the compiled path; correctness of any
+> inferred value never is.
 
 Only the *host* language is compiled ahead of time; **inference is a runtime,
 type-constrained effect** — a green compile is still structural, not semantic

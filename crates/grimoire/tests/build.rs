@@ -160,6 +160,69 @@ enact d.action {
     let _ = std::fs::remove_file(&src);
 }
 
+/// The headline acceptance for the engine ship path: a `grimoire build --features
+/// llama` artifact, run as a BARE standalone process (no JIT, no test harness),
+/// performs real grammar-constrained inference against a GGUF model named ONLY in
+/// the manifest. Skips unless `WITCHCRAFT_LLAMA_GGUF` points at a local model.
+///
+///   WITCHCRAFT_LLAMA_GGUF=$PWD/models/<model>.gguf \
+///     cargo test -p grimoire --features llama standalone_llama -- --nocapture
+#[cfg(feature = "llama")]
+#[test]
+fn standalone_binary_runs_real_llama_by_manifest() {
+    let gguf = match std::env::var("WITCHCRAFT_LLAMA_GGUF") {
+        Ok(p) if !p.is_empty() => p,
+        _ => {
+            eprintln!(
+                "SKIP standalone_binary_runs_real_llama_by_manifest: set WITCHCRAFT_LLAMA_GGUF \
+                 to a local GGUF path to run the shipped binary against real weights."
+            );
+            return;
+        }
+    };
+
+    // The model is named ONLY in the manifest (the contract); source never moves.
+    let manifest = unique_path("triage.llama.toml");
+    std::fs::write(
+        &manifest,
+        format!(
+            "[need.mock-triage-v1]\nengine = \"local-qwen\"\nlocality = \"local\"\n\n\
+             [engine.local-qwen]\nkind = \"llama\"\ngguf = \"{gguf}\"\n"
+        ),
+    )
+    .expect("write manifest");
+
+    let src = examples_dir().join("triage_flagship.witch");
+    let exe = unique_path("flagship-llama.exe");
+    build(&src, &exe);
+
+    let output = Command::new(&exe)
+        .arg("--manifest")
+        .arg(&manifest)
+        .args(["--seed", "7"])
+        .output()
+        .expect("run standalone llama binary");
+    assert!(
+        output.status.success(),
+        "standalone llama binary exited non-zero:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    eprintln!("standalone llama stdout:\n{stdout}");
+    // Provenance must show the REAL engine resolved by the manifest, not the Mock.
+    assert!(
+        stdout.contains("backend=llama"),
+        "expected real-llama provenance from the standalone binary, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("model=") && stdout.contains(".gguf"),
+        "provenance should name the manifest's GGUF model, got:\n{stdout}"
+    );
+
+    let _ = std::fs::remove_file(&exe);
+    let _ = std::fs::remove_file(&manifest);
+}
+
 #[test]
 fn version_reports_name_and_target() {
     let output = Command::new(GRIMOIRE)

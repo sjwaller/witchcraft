@@ -15,8 +15,10 @@ use std::process::{Command, ExitCode};
 
 use witchcraft::{check_source, lower_source, Diagnostic};
 
-/// The runtime, linked into every artifact. Embedded at build time (see build.rs)
-/// so a shipped `grimoire` is self-contained.
+/// The Mock-only runtime, embedded at build time (see build.rs) so a shipped
+/// `grimoire` is self-contained. Unused on the engine ship path, which links the
+/// larger real-engine runtime by build path instead (see `runtime_archive`).
+#[cfg_attr(grimoire_engines, allow(dead_code))]
 const RUNTIME_LIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/libwitchcraft_runtime.a"));
 
 fn main() -> ExitCode {
@@ -118,9 +120,8 @@ fn build(args: &[String]) -> Result<String, CliError> {
 fn link_executable(object: &[u8], out_path: &Path) -> Result<(), String> {
     let work = TempDir::new()?;
     let obj_path = work.path.join("program.o");
-    let lib_path = work.path.join("libwitchcraft_runtime.a");
     std::fs::write(&obj_path, object).map_err(|e| format!("writing object: {e}"))?;
-    std::fs::write(&lib_path, RUNTIME_LIB).map_err(|e| format!("writing runtime: {e}"))?;
+    let runtime_lib = runtime_archive(&work)?;
 
     let driver = std::env::var("GRIMOIRE_CC")
         .or_else(|_| std::env::var("CC"))
@@ -130,10 +131,10 @@ fn link_executable(object: &[u8], out_path: &Path) -> Result<(), String> {
         cmd.arg(format!("-fuse-ld={fuse_ld}"));
     }
     cmd.arg(&obj_path)
-        .arg(&lib_path)
+        .arg(&runtime_lib)
         .arg("-o")
         .arg(out_path)
-        .args(platform_link_args());
+        .args(link_args());
 
     let output = cmd
         .output()
@@ -147,10 +148,30 @@ fn link_executable(object: &[u8], out_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// System libraries the Rust runtime staticlib needs, by platform.
-fn platform_link_args() -> Vec<&'static str> {
-    if cfg!(target_os = "macos") {
-        vec![
+/// The Mock-only ship path: write the embedded, dependency-free runtime staticlib
+/// (built by bare `rustc` in build.rs) and link it.
+#[cfg(not(grimoire_engines))]
+fn runtime_archive(work: &TempDir) -> Result<PathBuf, String> {
+    let lib_path = work.path.join("libwitchcraft_runtime.a");
+    std::fs::write(&lib_path, RUNTIME_LIB).map_err(|e| format!("writing runtime: {e}"))?;
+    Ok(lib_path)
+}
+
+/// The engine ship path: reference the real-engine runtime staticlib build.rs
+/// produced (it bundles `libllama`/`libggml` + the engine bridge). It is large,
+/// so `grimoire` references it by build path rather than embedding it; the
+/// PRODUCED executable is still fully self-contained — engines and `libllama`
+/// are statically linked into it, and it needs no Rust to run.
+#[cfg(grimoire_engines)]
+fn runtime_archive(_work: &TempDir) -> Result<PathBuf, String> {
+    Ok(PathBuf::from(env!("GRIMOIRE_ENGINE_RUNTIME_LIB")))
+}
+
+/// System libraries the runtime staticlib needs.
+#[cfg(not(grimoire_engines))]
+fn link_args() -> Vec<String> {
+    let args: &[&str] = if cfg!(target_os = "macos") {
+        &[
             "-framework",
             "CoreFoundation",
             "-framework",
@@ -158,10 +179,25 @@ fn platform_link_args() -> Vec<&'static str> {
             "-liconv",
         ]
     } else if cfg!(target_os = "linux") {
-        vec!["-lpthread", "-ldl", "-lm"]
+        &["-lpthread", "-ldl", "-lm"]
     } else {
-        vec![]
-    }
+        &[]
+    };
+    args.iter().map(|s| s.to_string()).collect()
+}
+
+/// Native libraries the engine runtime needs (frameworks, libc++, libllama's
+/// transitive deps) — discovered by build.rs via `rustc --print
+/// native-static-libs` so the set tracks the engines actually linked.
+#[cfg(grimoire_engines)]
+fn link_args() -> Vec<String> {
+    env!("GRIMOIRE_ENGINE_LINK_ARGS")
+        .split_whitespace()
+        // clang's compiler-rt builtins are linked by the driver automatically;
+        // referencing it by `-l` name can fail to resolve, so drop it.
+        .filter(|a| !a.starts_with("-lclang_rt"))
+        .map(|s| s.to_string())
+        .collect()
 }
 
 fn default_output(file: &str) -> PathBuf {

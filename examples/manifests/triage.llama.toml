@@ -1,14 +1,20 @@
-# Deployment manifest: bind the TriageReasoner need to a real local llama.cpp
-# engine. The MODEL is named ONLY here (the contract forbids a model name in
-# application source). Swap this file for triage.laptop.toml (mock) or
-# triage.cloud.toml (frontier) with zero source change.
+# Deployment binding for the triage flagship — local llama.cpp profile.
+# Same program (examples/triage_flagship.witch), different manifest = different
+# engine, with ZERO source change. Swap this file for triage.laptop.toml (mock)
+# or triage.cloud.toml (frontier) and the source never moves.
+#
+# The MODEL (a GGUF on disk) is named ONLY here; the contract forbids a model
+# name in application source. Run with the `llama` feature:
+#   grimoire build examples/triage_flagship.witch -o triage
+#   ./triage --manifest examples/manifests/triage.llama.toml
 
-[need.TriageReasoner]
+[need.mock-triage-v1]
 engine = "local-qwen"
 locality = "local"
 latency = "interactive"
 
 [engine.local-qwen]
 kind = "llama"
-# GGUF weights sit beside the binary; path is the only model reference anywhere.
+# GGUF weights sit beside the binary; this path is the only model reference
+# anywhere in the project.
 gguf = "models/qwen2.5-0.5b-instruct-q4_k_m.gguf"
