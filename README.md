@@ -1,412 +1,392 @@
 # Witchcraft
 
-An **AI-native** programming language. Not "themed keywords over an inference
-SDK" — the nativeness *is* the type system. A model call that returns a string is
-sugar; Witchcraft makes inference a typed, discharged, constrained operation that
-the compiler reasons about.
+An AI-native programming language where **inference is a typed language primitive**, not a library call.
 
-The defining source of truth is the discussion paper *"Witchcraft: What Would an
-AI-Native Programming Language Actually Make Primitive?"* (Waller, 2025). This
-repository is the v0.1 bootstrap: the smallest core that proves the thesis end to
-end, deterministically and offline.
+You write a program against an *inference need* and the *shape* of the answer you want back. A model fills that shape — but the type isn't checked after the model speaks; it constrains generation *as it happens*, so a value outside the type is unreachable, not merely rejected. The model lives in a deployment manifest, never in your source, so the same program runs against a tiny local model today and a better one tomorrow with **zero code changes**.
 
-## The thesis, in one program
+```witchcraft
+oracle reader = summon "MoodReader"
 
-```
-type Action = one_of {
-    Draft(reply: glyph),
-    Escalate,
-    AskClarify(question: glyph),
+type Reading = {
+  feeling: one_of { Happy, Annoyed, Angry, Worried, Neutral }
+  urgency: spark in 0..10
 }
-type Disposition = { urgency: spark in 0..10, action: Action }
 
-oracle triage = summon "mock-triage-v1"
+divine r: Reading
+  from ("my payment failed again and I have a flight in an hour")
+  using reader
+  with confidence >= 0.0
+  fallback { feeling: Neutral, urgency: 0 }
 
-divine decision: Disposition
-    from (ticket)
-    using triage
-    with confidence >= 0.0
-    fallback "escalated: low confidence"
+print "feeling: ${r.feeling}, urgency: ${r.urgency}/10"
+```
 
-enact decision.action {
-    Draft(reply)        => { print "drafted: ${reply}" }
-    Escalate            => { print "escalated to a human" }
-    AskClarify(question) => { print "asked: ${question}" }
+`urgency` can only come back as a number 0–10; `feeling` can only be one of those five — enforced *during* generation. The model named `MoodReader` is resolved from a manifest at run time.
+
+> **Status: v0.1.** The core is proven end to end — the type genuinely constrains generation against real `llama.cpp` weights, and a compiled program runs real inference as a standalone binary. Some surface (richer agents, capability tiers) is intentionally deferred; see [Limitations](#limitations).
+
+---
+
+## Contents
+
+- [Requirements](#requirements)
+- [Build from source](#build-from-source)
+- [Your first program](#your-first-program)
+- [Running against a real model](#running-against-a-real-model)
+- [Swapping models with zero code change](#swapping-models-with-zero-code-change)
+- [Compiling to a standalone binary](#compiling-to-a-standalone-binary)
+- [The CLI](#the-cli)
+- [Language tour](#language-tour)
+- [Project layout](#project-layout)
+- [Limitations](#limitations)
+- [The idea behind it](#the-idea-behind-it)
+
+---
+
+## Requirements
+
+To **use** Witchcraft programs you only need the `witch` and `grimoire` binaries — no Rust, no Python, no other toolchain at run time.
+
+To **build the toolchain from source** you need:
+
+- **Rust** (stable, edition 2021) — `rustup` recommended
+- **A C/C++ compiler** — only if you build with a real local model engine (`llama.cpp` is compiled from source)
+- **CMake** — same; only for the `llama` engine feature
+- A small **GGUF model file** — only if you want to run against a real local model (any small quantised instruct model works, e.g. a 0.5B–7B Qwen/Llama GGUF)
+
+The default build needs none of the model dependencies — it ships a deterministic, offline **Mock** engine so you can write, check, and run programs with nothing installed but Rust.
+
+---
+
+## Build from source
+
+```bash
+git clone https://github.com/sjwaller/witchcraft.git
+cd witchcraft
+
+# Default build: offline, deterministic Mock engine, no model deps
+cargo build --release
+
+# The two binaries land in target/release/
+#   witch     — check & run .witch programs
+#   grimoire  — compile .witch programs to standalone native binaries
+```
+
+Optionally put them on your `PATH`:
+
+```bash
+export PATH="$PWD/target/release:$PATH"
+witch --version
+```
+
+To build with a **real local model engine** linked in (compiles `llama.cpp`, needs CMake + a C++ compiler):
+
+```bash
+cargo build --release --features llama          # for `witch`
+cargo build --release -p grimoire --features llama   # for `grimoire`
+```
+
+---
+
+## Your first program
+
+Create `hello.witch`:
+
+```witchcraft
+type Reading = {
+  feeling: one_of { Happy, Annoyed, Angry, Worried, Neutral }
+  urgency: spark in 0..10
 }
+
+oracle reader = summon "MoodReader"
+
+divine r: Reading
+  from ("the website keeps logging me out, so frustrating")
+  using reader
+  with confidence >= 0.0
+  fallback { feeling: Neutral, urgency: 0 }
+
+print "feeling: ${r.feeling}"
+print "urgency: ${r.urgency}/10"
 ```
 
-The **litmus test**: if you deleted the `Disposition`/`Action` types, the
-computation *at the moment of inference* would change — the decoder would emit
-free text instead of a bounded `urgency` and one of exactly three actions. That
-is the difference between a primitive and decoration.
-
-What the compiler guarantees here, statically:
-
-- `urgency` can only be a `spark in 0..10` — the type compiles into the
-  generation grammar, so out-of-range values are unreachable, not merely
-  validated after the fact.
-- `decision` is `Inferred<Disposition>` until it is **discharged** by the
-  `with confidence >= θ` gate. Using it authoritatively without that gate is a
-  compile error.
-- `enact` must handle **exactly** the declared variants — missing or unknown
-  actions are compile errors.
-- provenance (oracle, model, seed) threads through to the enacted action.
-
-## Install
-
-Witchcraft is a first-class, standalone language: install the `witch` toolchain
-and you can write, check, and run `.witch` programs with **no Rust and no other
-toolchain**. (Rust is only how the maintainers build the binaries — like C is for
-CPython.) Prebuilt binaries are published for macOS, Linux, and Windows.
+**Check it** (static checks only — never runs the program):
 
 ```bash
-# install script (macOS / Linux): downloads + checksum-verifies a prebuilt binary
-curl -fsSL https://raw.githubusercontent.com/sjwaller/witchcraft/main/scripts/install.sh | sh
-
-# or Homebrew
-brew install sjwaller/tap/witchcraft
-
-# or download an archive from the Releases page, extract, and put `witch` on PATH
+witch check hello.witch
 ```
 
-Verify:
+**Run it** with the default offline Mock engine (deterministic, no model needed):
 
 ```bash
-witch --version          # e.g. witch 0.1.0 (aarch64-apple-darwin)
-witch run example.witch  # runs offline, deterministically, no config
+witch run hello.witch --seed 7
 ```
 
-A freshly installed binary runs every example offline using the bundled
-deterministic decoder — no network and no inference backend required. Real model
-backends are an optional, separate deployment choice, never an install
-dependency.
+With no `--manifest`, every `summon` need is served by the Mock engine: it produces a value that *inhabits your type* (so the program runs and is reproducible per seed), but it does not "understand" the message. That's intentional — it lets you develop and test the *shape and logic* of a program offline, then plug in a real model when you want real answers.
 
-## Usage
+---
+
+## Running against a real model
+
+Witchcraft programs never name a model. You bind a need to a real engine in a **manifest** (a TOML file), then pass it with `--manifest`.
+
+1. Get a small GGUF model, e.g.:
 
 ```bash
-# parse + type-check only (never executes)
-witch check examples/triage.witch
-
-# type-check, then run with a fixed seed (fully reproducible)
-witch run examples/triage.witch --seed 1
+mkdir -p models
+# any small instruct GGUF works; example:
+curl -L -o models/qwen2.5-0.5b-instruct-q4_k_m.gguf \
+  "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf"
 ```
 
-`witch check` exits non-zero on any error and never executes code. `witch run`
-refuses to run an ill-typed program.
+2. Create `mood.local.toml` — the model is named **only here**:
 
-## Compile to a native executable
-
-There are two paths, and they agree:
-
-- **`witch run`** is the **dev loop** — a tree-walking interpreter, fast to
-  iterate, no build step (the `go run` analogue).
-- **`grimoire build`** is the **ship path** — it compiles a program ahead of time
-  (Cranelift) and links it with the runtime into a **single self-contained native
-  executable** that runs with **no Rust and no `.witch` source**.
-
-```bash
-# compile a program to a native binary
-grimoire build examples/triage.witch -o triage
-
-# run it like any other executable; --seed is accepted, just like `witch run`
-./triage --seed 1
-
-# build with a real engine linked in, then select it purely by manifest:
-grimoire build --features llama examples/triage_flagship.witch -o triage
-./triage                                                  # no manifest → Mock
-./triage --manifest examples/manifests/triage.llama.toml  # → real local llama
-```
-
-The compiled binary and the interpreter produce **identical** output for the same
-program and seed — this equivalence is enforced in CI. Crucially, the output type
-is compiled into the artifact as a **generation grammar** (the litmus property
-holds in compiled form): the `divine` site stays a runtime, type-constrained call
-into the bundled decoder, so inference is never pre-computed at build time.
-
-The compiled `divine` routes through the **same `Engine` contract + manifest** the
-interpreter uses (§ *Inference is an effect*, below) — models are named only in the
-manifest, the artifact carries only the intent and the output grammar. The native
-binary resolves every need at load and **refuses to start** on an unsatisfiable
-policy, exactly like `witch run`. Selecting Mock / local llama / a frontier engine
-is purely a manifest change, with zero source change — and this works in the
-**shipped standalone binary**, not just the dev loop: a `grimoire build --features
-llama` artifact run as a bare process performs real GBNF-masked inference against a
-GGUF model named only in the manifest (`provenance: … backend=llama …`), and falls
-back to the deterministic Mock with no manifest.
-
-> Honest boundary (§8): with an engine feature, the engine `grimoire` references
-> its real-engine runtime archive (which bundles `libllama`) by build path rather
-> than embedding it; the *produced* executable is still fully self-contained
-> (engines + `libllama` statically linked into it, no Rust at run time). The
-> **default** `grimoire` stays a dependency-free, embedded, Mock-only `staticlib`.
-> Shape and policy are guaranteed on the compiled path; correctness of any
-> inferred value never is.
-
-Only the *host* language is compiled ahead of time; **inference is a runtime,
-type-constrained effect** — a green compile is still structural, not semantic
-(see below). `grimoire build` refuses ill-typed programs (no artifact, non-zero
-exit).
-
-> Linking drives a C compiler driver (`cc` by default) to produce the final
-> executable; the runtime itself is carried inside `grimoire`. The driver/linker
-> is a configurable seam (`GRIMOIRE_CC`, `GRIMOIRE_FUSE_LD=lld`). *Bundling* a
-> linker so no system toolchain is needed at all — and the per-platform SDK
-> handling that implies — is a distribution refinement.
-
-## Build from source (contributors only)
-
-End users do not need this. Requires a recent Rust toolchain (`cargo`).
-
-```bash
-cargo build
-cargo test
-cargo run -p witch -- run examples/triage.witch --seed 1
-```
-
-## Inference is a swappable engine, never a bound model
-
-A program is written against a **NEED + POLICY**, not a model. An `oracle` names a
-semantic **intent**, `divine` states the typed output (which becomes the
-generation grammar), and the source states **policy** (locality, litmus-strictness)
-— never a model, vendor, or engine. A deployment **manifest** binds each intent to
-a concrete engine. The same program, under a different manifest, runs on the
-laptop, the edge, or the cloud with **zero source change**:
-
-```
-# laptop.toml binds the intent to a local model
-[need.TriageReasoner]
-engine = "local"
-model  = "qwen2.5-3b-instruct"
+```toml
+[need.MoodReader]
+engine   = "local-small"
 locality = "local"
 
-[engine.local]
-kind = "llama-cpp"            # or "mock" (the offline default), "anthropic", ...
-gguf = "./models/qwen.gguf"
+[engine.local-small]
+kind = "llama"
+gguf = "./models/qwen2.5-0.5b-instruct-q4_k_m.gguf"
 ```
 
-```
-witch run triage.witch --manifest laptop.toml   # same source, local engine
-witch run triage.witch --manifest cloud.toml    # same source, frontier engine
-```
-
-The language trusts the **contract**, not the engine. Every legal engine must
-satisfy **grammar-by-construction**: the output type constrains generation
-token-by-token, so illegal outputs are *unreachable* — never validated and
-resampled. This is what lets an app outlive the models it runs on.
-
-- **Models are named only in the manifest.** A model name in source is a design
-  violation the contract forbids structurally.
-- **`permit(network)` is the locality policy.** Absent ⇒ on-device-only; a network
-  binding then **refuses to start** rather than silently crossing the boundary.
-- **Litmus-strict by default.** An engine that cannot demonstrate token-level
-  masking (e.g. a frontier provider enforcing JSON-schema server-side) is marked
-  **non-litmus-safe**; binding it to a strict need refuses to start unless the
-  source carries an explicit downgrade (`permit(unsafe_inference)`).
-- **Load-time resolution.** Every need is resolved when the program starts; an
-  unsatisfiable policy is a refusal with a diagnostic, never a silent fallback.
-
-The offline default is a deterministic, grammar-respecting **Mock** engine (no
-network), so first runs, examples, and CI are reproducible. Real engines ship
-behind cargo features: `--features llama` (llama.cpp via GBNF) and
-`--features frontier` (a JSON-schema API).
-
-### The falsification test (the canary)
-
-The thesis is real only if the type *participates in generation*. The falsification
-test builds a `divine` site twice — once with the real grammar, once with the type
-weakened — drives both through an engine, and asserts that at some decode step a
-token the weakened grammar permitted was **forbidden** by the real grammar
-(masking actually occurred). Comparing final outputs is explicitly *not* enough.
-If masking cannot be shown, the test fails loudly: the engine is a wrapper, not
-AI-first.
-
-**Verified against a real model.** The litmus does not just hold for the Mock —
-it holds against real **llama.cpp** weights via the GBNF grammar sampler. With a
-local GGUF model (any small quantised model is enough — we test the *masking
-mechanism*, not quality):
+3. Build `witch` with the `llama` feature and run:
 
 ```bash
-brew install cmake                       # build prereq for llama.cpp
-# fetch any small GGUF into ./models, then:
-WITCHCRAFT_GGUF=$PWD/models/<model>.gguf \
-  cargo test -p witchcraft --features llama real_llama -- --nocapture
+cargo build --release --features llama
+witch run hello.witch --manifest mood.local.toml --seed 7
 ```
 
-The real GBNF sampler drives a free-text token to `-inf` at the very first decode
-step under the typed grammar, and the full real generation produces an *in-type*
-`Record { urgency, action }` by construction while the weakened grammar wanders to
-free text. That is grammar-by-construction surviving contact with a real
-tokenizer.
+Now `MoodReader` is a real model. The output shape is still guaranteed by the type, but the *content* now reflects an actual reading of the message.
 
-**Non-litmus-safe engines refuse at runtime.** A frontier API enforces a schema
-server-side with no observable token mask, so it is marked non-litmus-safe. A
-litmus-strict `divine` bound to it **refuses to start** — proven at the CLI, not
-just in a unit test:
+> **Seeds:** with the Mock engine a seed reproduces output exactly. With real local or network models, a seed is **best-effort** — output may vary across machines, quantisations, and providers.
+
+---
+
+## Swapping models with zero code change
+
+This is the point of the language. Write a second manifest pointing at a bigger model:
+
+```toml
+# mood.better.toml
+[need.MoodReader]
+engine   = "local-big"
+locality = "local"
+
+[engine.local-big]
+kind = "llama"
+gguf = "./models/qwen2.5-7b-instruct-q4_k_m.gguf"
+```
+
+Run the **same program**, different manifest:
 
 ```bash
-cargo run -p witch --features frontier -- run examples/strict_divine.witch \
-  --manifest examples/manifests/triage.frontier.toml
-# error[runtime]: refuse to start: need `cloud-triage-v1` is litmus-strict but
-# engine `frontier-large` is non-litmus-safe (...); add a source-visible
-# downgrade to run anyway
+witch run hello.witch --manifest mood.local.toml    # small model
+witch run hello.witch --manifest mood.better.toml   # bigger model — sharper reading
 ```
 
-The validate-after engine cannot silently serve a strict need; the program never
-runs a line until the policy is satisfiable.
+Same source. The program gets smarter because the model behind the need got smarter. A program you write today keeps working — and improves — as better models appear, with no rewrite.
 
-### Determinism honesty (§8)
+### Network engines and the network permit
 
-With the **Mock** engine, the same `--seed` reproduces output exactly. With a real
-local or network engine, a seed is **best-effort only** — output is not guaranteed
-to reproduce across machines, quantisations, or providers. Provenance always
-records the intent, resolved model, `model_version_or_sha`, backend, seed, and
-sampling so a run is explainable even when it is not bit-reproducible. As always:
-**shape and policy are guaranteed; quality never is.**
+A manifest can also bind a need to a network model:
 
-## Capabilities (the compile-time effect discipline)
+```toml
+# mood.cloud.toml
+[need.MoodReader]
+engine   = "cloud"
+locality = "network"
 
-Some operations should only be legal inside a context that has been granted the
-right permission. Witchcraft expresses this as a **capability/effect discipline**
-checked entirely at compile time — the substrate the forthcoming `memory` (scope)
-and `familiar` (permits) primitives specialise, built once so they cannot drift
-into two divergent checkers.
+[engine.cloud]
+kind  = "frontier"
+model = "<your-frontier-model-id>"
+```
 
-- A function declares what it needs with `requires`, and a `with grant` region
-  makes capabilities available to the code inside it:
+Because reaching the network is a consequence the program author must take responsibility for, a `divine` site that may use a network engine has to **grant `permit(network)` in the source**. A program without that permit, bound to a network engine, will **refuse to start** rather than silently phone out. Network (frontier) engines that constrain output server-side (rather than by token-level masking) are marked *non-litmus-safe*: a strict need will refuse them unless the source carries an explicit, visible downgrade. See `examples/strict_divine.witch`.
+
+---
+
+## Compiling to a standalone binary
+
+`grimoire` compiles a `.witch` program to a self-contained native executable.
+
+```bash
+# Mock engine (offline, no model deps)
+cargo build --release -p grimoire
+grimoire build hello.witch -o hello
+./hello --seed 7
+
+# With a real local model linked in
+cargo build --release -p grimoire --features llama
+grimoire build hello.witch -o hello
+./hello --manifest mood.local.toml --seed 7
+```
+
+The produced binary is self-contained (the model engine is statically linked); the model file itself is still loaded from the path in the manifest at run time. The same compiled binary swaps engines purely by manifest, exactly like `witch run`.
+
+---
+
+## The CLI
+
+### `witch` — check and run
 
 ```
-fn escalate() requires permit(escalate) { print "escalated to a human" }
+witch check <file.witch>                 Static checks only; never executes.
+witch run   <file.witch> [flags]          Run the program.
+witch --version
 
-with grant permit(escalate) {
-    escalate()        // ok: the capability is granted here
+Flags for `run`:
+  --manifest <file.toml>   Bind each need to a real engine. Without it, the
+                           deterministic offline Mock engine serves every need.
+  --seed <n>               Determinism: exact with Mock; best-effort with real models.
+```
+
+`witch check` exits non-zero on any error and never runs code. It verifies *structure* — types, discharge of inferred values, exhaustive `enact`, capability/scope rules — **not** that an inferred value is correct.
+
+### `grimoire` — compile
+
+```
+grimoire check <file.witch>              Static checks (same as `witch check`).
+grimoire build <file.witch> [-o out]     Compile to a standalone native binary.
+```
+
+Build features (passed to `cargo`, not the CLI): `--features llama` links a local `llama.cpp` engine; `--features frontier` links a network engine.
+
+---
+
+## Language tour
+
+A quick reference to the constructs. See `examples/` for working programs.
+
+**Host language** — ordinary, unsurprising, deliberately *not* themed:
+
+```witchcraft
+fn add(a, b) { a + b }
+let name = "world"
+var n = 0
+while n < 3 { print "hi ${name} ${n}"  n = n + 1 }
+if n == 3 { print "done" } else { print "?" }
+```
+
+**`oracle`** — declare an inference need (named, never a model):
+
+```witchcraft
+oracle reader = summon "MoodReader"
+```
+
+**Types as answer-shapes** — refined numbers, records, closed variant sets:
+
+```witchcraft
+type Action = one_of { Draft(reply: glyph), Escalate, AskClarify(question: glyph) }
+type Disposition = { urgency: spark in 0..10, action: Action }
+```
+
+**`divine`** — inference *is* the computation; the type constrains generation:
+
+```witchcraft
+divine d: Disposition
+  from (ticket)
+  using reader
+  with confidence >= 0.8      # discharge gate
+  fallback "low confidence"   # taken if confidence < threshold
+```
+
+The result is `Inferred<Disposition>` until the `with confidence` gate discharges it. Using it authoritatively without discharging is a **compile error**.
+
+**`enact`** — exhaustive dispatch over a variant set (missing/unknown arms are compile errors):
+
+```witchcraft
+enact d.action {
+  Draft(reply)         => { print "drafted: ${reply}" }
+  Escalate             => { print "escalated" }
+  AskClarify(question) => { print "asked: ${question}" }
 }
-
-escalate()            // compile error: permit(escalate) is not granted
 ```
 
-- A capability is a **kind plus an optional parameter** (`permit(escalate)`,
-  `scope(tenant)`), so `scope(tenant)` and `scope(user)` are distinct.
-- Requirements are **transitive**: calling a `requires` function obliges the
-  caller to grant the capability or re-declare the same `requires`.
-- Capabilities are **erased before runtime** — they change what *compiles*, never
-  what executes; a granted program runs identically to one with the scaffolding
-  removed (compiled and interpreted output match).
+**`memory` + `within`** — governed, scoped state; access outside the scope is a compile error:
 
-Capability checking is **structural**: a passing check says an operation is
-*permitted* in its context, never that performing it is *wise* (§8).
+```witchcraft
+memory session:
+  scope operator
+  retention 1 hours
+  retrieval recency
 
-## Embeddings carry their space (no cross-space comparison)
-
-An `embedding` is typed by its **vector space** (`embedding@<model>`), produced by
-`oracle.embed(...)`. `similarity` and `nearest` are defined only *within* a space;
-comparing embeddings from different spaces is a **compile-time error** with a
-diagnostic naming both spaces — the §5.3 bug made unrepresentable. There is no
-implicit cross-space bridge. (Embeddings are interpreter-only in v0.1; the
-compiled ship path covers the host language plus `divine`/`enact`.)
-
-```
-oracle triage = summon "support-reasoner-v3"
-let a = triage.embed("payment failed")
-let b = triage.embed("card declined")
-print similarity(a, b)        # same space: fine
-```
-
-A passing check guarantees only that compared embeddings share a space — never
-that an embedding is meaningful or that a `nearest` result is *relevant* (§8).
-
-## Governed memory (scope is a capability)
-
-A `memory` is a declared, governed resource — its `scope` is bound to a capability
-(via the capability discipline above), so a read or write outside the scope is a
-**compile-time error**. The headline §5.2 guarantee: a cross-tenant access *will
-not compile*.
-
-```
-memory tickets { scope tenant, retention 24 months, retrieval recency, audit required }
-
-within tenant {                 # grants scope(tenant)
-    tickets.write("payment failed for order 7")
-    print tickets.recent(5)     # newest-first, non-expired
-}
-
-tickets.recent(5)               # compile error: scope(tenant) not granted here
-```
-
-Retention and audit are **runtime-enforced** (deterministic in-memory store with a
-logical clock; expired entries are not retrieved; `audit required` records every
-governed access). v0.1 ships recency/exact retrieval; semantic retrieval (a
-same-space query embedding against stored embeddings) is composed in the flagship.
-Memory is interpreter-only in v0.1. The green check guarantees scope adherence —
-never that retained data is correct, audit complete, or retrieval relevant (§8).
-
-## Familiars: bounded agents whose permits are checkable
-
-A `familiar` is, deliberately, **not** a primitive — it is a named, bounded
-composite of oracle/`divine`/`enact` (and memory/embedding). The elevation-worthy,
-checkable thing is its `permits` set: the body is granted exactly those
-capabilities and no others, so an action outside the permits **will not compile**.
-
-```
-familiar support_triage(msg) permits { invoke triage, escalate } {
-    divine decision: Disposition from (msg) using triage
-        with confidence >= 0.7 fallback escalate()
-    enact decision.action { ... }     # only permitted actions
+within operator {
+  session.write("note")
+  let recent = session.recent(3)
 }
 ```
 
-In v0.1 a familiar is **single-pass and deterministic** (the §10 firebreak): no
-free-running loop or scheduler — an unbounded loop in a familiar body is a
-compile error. Inside a familiar, `divine ... using <oracle>` requires the
-`invoke <oracle>` permit. Familiars are interpreter-only in v0.1. A green check
-guarantees permit adherence and bounded structure — never that the agent's plan
-is sound, well-behaved, or terminates in practice (§8/§10).
+**`embedding`** — typed vectors carrying their space; cross-space comparison is a compile error:
 
-## The flagship: four guarantees composed
-
-`examples/triage_flagship.witch` is the §6.3 worked example — a tenant-scoped
-`memory`, an `oracle`, a typed `Disposition`, and a single-pass `familiar` that
-embeds the message, retrieves scoped history, `divine`s a decision, and `enact`s
-its action. It composes all four structural guarantees and bootstrap's
-discharge/exhaustiveness, with no new language feature:
-
-```
-witch run examples/triage_flagship.witch
+```witchcraft
+embedding q = reader.embed("text")
+let hits = session.nearest(q, k: 5)
 ```
 
-Each of the paper's four "will not compile" contrasts is a negative test in
-`crates/witchcraft/tests/flagship.rs`: an undischarged `divine`, an unscoped
-memory read, a cross-space embedding comparison, and an out-of-permit familiar
-action all fail `witch check`. The litmus also holds — deleting/weakening the
-`Disposition` type changes generation under a fixed seed. A green flagship proves
-the guarantees *compose*; it is never a claim that the triage decision is correct
-or well-judged (§8).
+**`familiar`** — a bounded, single-pass agent with declared permits; an action outside its permits is a compile error:
 
-## A green build is structural, not a correctness guarantee
+```witchcraft
+familiar triage(msg: glyph) permits { invoke reader, escalate } {
+  # ... bounded body, no free-running loop ...
+}
+```
 
-This cannot be overstated (paper §8): the compiler verifies **structural**
-properties — refinement bounds, the discharge rule, `enact` exhaustiveness,
-variant validity. It does **not** and cannot assert that an inferred value is
-*correct*. `witch check` passing means the program is well-formed around its
-inference, not that the oracle was right.
+---
 
-## Layout
+## Project layout
 
-- `crates/witchcraft/` — the language: lexer, parser, type checker, interpreter,
-  type→grammar compiler, the constrained decoder, and the lowering IR.
-- `crates/witchcraft-runtime/` — the compiled runtime linked into every artifact:
-  value model + reference counting, the decoder/oracle seam, provenance.
-- `crates/witchcraft-codegen/` — the Cranelift backend (lowering IR → native code,
-  JIT for tests and an object file for the ship path).
-- `crates/witch/` — the `witch` CLI (check / run — the dev loop).
-- `crates/grimoire/` — the `grimoire` CLI (build — the ship path).
-- `examples/` — runnable `.witch` programs.
-- `crates/witchcraft/tests/` — acceptance tests (litmus, fault injection,
-  negative type tests, golden output).
-- `crates/grimoire/tests/` — compiled-executable equivalence tests (compiled
-  output == interpreter, ill-typed programs refused).
-- `docs/grammar.ebnf` — the formal grammar, kept in step with the parser.
-- `openspec/` — the specs and change proposals this implementation is built from.
+```
+crates/
+  witch/              # the `witch` CLI (check, run)
+  grimoire/           # the `grimoire` CLI (compile to native binary)
+  witchcraft/         # the language: parser, type checker, interpreter, engines
+  witchcraft-codegen/ # the Cranelift native backend
+  witchcraft-runtime/ # the runtime linked into compiled artifacts
+examples/             # sample programs
+  triage_flagship.witch   # the full example: all four primitives together
+  triage.witch
+  strict_divine.witch     # demonstrates permit(network) + the strict-engine refusal
+  host.witch              # plain host-language features
+  manifests/              # example engine bindings (laptop/llama/cloud/frontier)
+openspec/             # the spec-driven design history (proposals, specs, tasks)
+```
+
+Run the test suite:
+
+```bash
+cargo test --workspace                          # offline, Mock engine
+cargo test -p witchcraft --features llama        # real-model tests (needs a GGUF; see below)
+```
+
+The real-model tests skip themselves unless you point them at a model, e.g.
+`WITCHCRAFT_GGUF=./models/<model>.gguf cargo test -p witchcraft --features llama -- --nocapture`.
+
+---
+
+## Limitations
+
+Witchcraft is a v0.1 proof of the core thesis. Known and intentional boundaries:
+
+- **Guarantees are structural, never semantic.** The type guarantees the *shape* of an inferred value and that the engine honoured the policy. It does **not** guarantee the answer is *good* — a small model can return a well-formed but poor judgement. Choosing a capable enough model is your responsibility.
+- **No free-running agents.** `familiar` is deliberately single-pass and bounded (no persistent loops, scheduling, or autonomy) as a safety boundary. Long-running behaviour is driven by a host loop you control, not by an autonomous agent.
+- **Capability "tiers" are advisory only.** There is no enforced notion of "this model is good enough for this need" — that remains an open problem and is not solved here.
+- **Network (frontier) engines may be non-litmus-safe.** If a provider constrains output server-side rather than by token-level masking, it cannot prove generation was constrained and is marked accordingly; strict needs refuse it without an explicit source-visible downgrade.
+- **Seeds are exact only with the Mock engine.** Real models are best-effort.
+
+---
+
+## The idea behind it
+
+The full argument is in the discussion paper *“Witchcraft: What Would an AI-Native Programming Language Actually Make Primitive?”* (Waller, 2025). In brief:
+
+Most “AI-native” tooling wraps a model in a library and calls it from a language that knows nothing about the model. Witchcraft asks what it would mean to make inference, memory, embeddings, and agents *primitives* the compiler reasons about. The load-bearing test — the **litmus** — is this: *if you deleted the output type, would the computation at the moment of inference change?* For a library wrapper the type is post-hoc validation, so the answer is no. In Witchcraft the type compiles into the generation grammar and constrains the model token by token, so the answer is yes — and that difference is verified against real `llama.cpp` weights.
+
+The language is built for the **collaboration layer**: not a language *by* AIs *for* AIs (that world needs no source code at all), but a human-authored language that makes AI a first-class primitive *so a person can still read, constrain, and answer for what the intelligence does.*
+
+---
 
 ## License
 
-CC-BY-4.0 (matching the discussion paper).
+See [LICENSE](LICENSE).
