@@ -20,16 +20,28 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # native_test: run the full suite on this runner (host arch == target).
+          # use_cross: build via `cross` (containerised linker); otherwise plain cargo.
           - os: macos-latest
             target: aarch64-apple-darwin
+            native_test: true
+            use_cross: false
           - os: macos-latest
             target: x86_64-apple-darwin
+            native_test: false
+            use_cross: false
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
+            native_test: true
+            use_cross: false
           - os: ubuntu-latest
             target: aarch64-unknown-linux-musl
+            native_test: false
+            use_cross: true
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            native_test: true
+            use_cross: false
     steps:
       - uses: actions/checkout@v4
 
@@ -45,18 +57,21 @@ jobs:
           sudo apt-get install -y musl-tools
           cargo install cross --locked
 
-      # musl + aarch64 cross compiles are most reliable via `cross` (containerised
-      # linker). Native targets build directly.
+      # Cross-arch targets (x86_64-darwin on arm64 macOS, aarch64-linux on x86_64
+      # Ubuntu) are built and packaged but NOT test-run: the runner cannot execute
+      # cross-arch binaries, and grimoire's native-build tests link a runtime .a that
+      # would pull the host arch into a cross link. Native-arch targets gate the
+      # release with the full suite.
       - name: Test
-        if: "!contains(matrix.target, 'aarch64-unknown-linux')"
+        if: matrix.native_test
         run: cargo test --all --release --target ${{ matrix.target }}
 
       - name: Build
-        if: "!contains(matrix.target, 'aarch64-unknown-linux')"
+        if: "!matrix.use_cross"
         run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Build (cross)
-        if: contains(matrix.target, 'aarch64-unknown-linux')
+        if: matrix.use_cross
         run: cross build --release --locked --target ${{ matrix.target }}
 
       - name: Package (unix)
