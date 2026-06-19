@@ -117,8 +117,8 @@ fn json_schema_encodes_range_and_strict_variant() {
         "oneOf is forbidden in OpenAI strict mode: {schema}"
     );
     assert!(
-        schema.contains("\"tag\":{\"const\":\"Draft\"}"),
-        "each branch carries a tag discriminator: {schema}"
+        schema.contains("\"tag\":{\"type\":\"string\",\"const\":\"Draft\"}"),
+        "each branch carries a typed tag discriminator: {schema}"
     );
     assert!(
         schema.contains("\"additionalProperties\":false"),

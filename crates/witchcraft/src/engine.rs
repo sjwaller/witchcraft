@@ -532,8 +532,12 @@ fn json_schema_strict(grammar: &Grammar) -> String {
             let branches: Vec<String> = variants
                 .iter()
                 .map(|v| {
-                    let mut props: Vec<(String, String)> =
-                        vec![("tag".to_string(), format!("{{\"const\":\"{}\"}}", v.name))];
+                    // OpenAI strict requires every leaf schema to carry a
+                    // `type`, including the `const` discriminator.
+                    let mut props: Vec<(String, String)> = vec![(
+                        "tag".to_string(),
+                        format!("{{\"type\":\"string\",\"const\":\"{}\"}}", v.name),
+                    )];
                     for (fname, fsub) in &v.fields {
                         props.push((fname.clone(), json_schema_strict(fsub)));
                     }
