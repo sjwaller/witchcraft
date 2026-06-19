@@ -9,8 +9,12 @@ use crate::types::Type;
 
 /// Default upper bound for an unrefined `spark` output (kept small + deterministic).
 const SPARK_DEFAULT_HI: f64 = 100.0;
-/// Bounded-text length for `glyph` outputs.
-const GLYPH_MAX_LEN: usize = 16;
+/// Bounded-text length for `glyph` outputs. A fuller-prose bound — enough for a
+/// sentence or two of narration — while staying length-capped (generation has a
+/// hard stop, never unbounded). The GBNF encodes this as a single bounded
+/// repetition (`[class]{0,N}`), so per-token grammar cost is independent of `N`;
+/// the litmus property depends only on the bound EXISTING, not its exact value.
+const GLYPH_MAX_LEN: usize = 160;
 /// Maximum upper bound for a generated list (design D3/risk: the GBNF length
 /// disjunction is O(hi), so v0.x caps it; bounded dungeon exits are 0..4).
 pub const LIST_MAX_HI: u32 = 16;

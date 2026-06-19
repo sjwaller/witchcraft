@@ -37,8 +37,10 @@ fn real_grammar() -> Grammar {
 }
 
 /// Deleting the type weakens generation to free text (the existing litmus knob).
+/// `max_len` mirrors the glyph bound `compile(weaken=true)` produces; the litmus
+/// contrast at step 0 is independent of the exact cap.
 fn weakened_grammar() -> Grammar {
-    Grammar::Text { max_len: 16 }
+    Grammar::Text { max_len: 160 }
 }
 
 #[test]
@@ -193,7 +195,7 @@ fn mock_masks_list_element_type_out_of_set_is_unreachable() {
     // element's content step the strict grammar forbids a letter the weakened
     // (free-text) element permits — an out-of-set "variant" is unreachable.
     let weak = Grammar::List {
-        elem: Box::new(Grammar::Text { max_len: 16 }),
+        elem: Box::new(Grammar::Text { max_len: 160 }),
         lo: 0,
         hi: 4,
     };
@@ -501,7 +503,7 @@ fn real_llama_masks_list_cardinality() {
         "DungeonMaster",
         "you are in a damp cellar with passages leading away",
         &exits_list(0, 4),
-        &Grammar::Text { max_len: 16 },
+        &Grammar::Text { max_len: 160 },
         7,
     );
     eprintln!("=== REAL-SAMPLER LIST-STRUCTURE WITNESS (llama.cpp / GBNF) ===");

@@ -101,7 +101,7 @@ fn triage_executable_is_self_contained_and_deterministic() {
     build(&src, &exe);
     let expected = "\
 urgency: 8
-drafted reply: fcrlysheyyil
+drafted reply: fcrlysheyyilpbsqoibohbvfhqogjwvgxhqcehfwhwkmhucrgolzfesishatccbjztxxzfellglp
 provenance: intent=mock-triage-v1 model=mock-triage-v1 version=mock backend=mock seed=1 sampling=deterministic
 ";
     assert_eq!(run_exe(&exe, 1), expected);

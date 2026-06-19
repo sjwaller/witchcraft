@@ -371,15 +371,15 @@ pub fn grammar_to_gbnf(grammar: &Grammar) -> String {
     format!("root ::= {body}\n")
 }
 
-/// The optional character classes a bounded `glyph` admits (no surrounding
-/// quotes). The class excludes `"` and `\`, so a quoted JSON string built from
-/// it needs no escaping.
+/// The character class a bounded `glyph` admits, length-capped via a single GBNF
+/// bounded repetition `[class]{0,N}` (NOT N chained `char?` slots — that made the
+/// grammar engine fan out O(N) parallel stacks per token and dominated decode
+/// time). `{0,N}` compiles to a recursive `S'(k) ::= class S'(k-1) |` chain, so
+/// only one level is active per step and per-token cost is independent of `N`.
+/// The class excludes `"` and `\`, so a quoted JSON string built from it needs no
+/// escaping. Still a hard upper bound: a glyph longer than `N` is unreachable.
 fn text_char_classes(max_len: usize) -> String {
-    let mut body = String::new();
-    for _ in 0..max_len.max(1) {
-        body.push_str("[a-zA-Z0-9 .,!?]?");
-    }
-    body
+    format!("[a-zA-Z0-9 .,!?]{{0,{}}}", max_len.max(1))
 }
 
 fn gbnf_rule(grammar: &Grammar) -> String {

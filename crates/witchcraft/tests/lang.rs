@@ -622,7 +622,7 @@ fn triage_example_is_deterministic_golden() {
     );
     let expected = "\
 urgency: 8
-drafted reply: fcrlysheyyil
+drafted reply: fcrlysheyyilpbsqoibohbvfhqogjwvgxhqcehfwhwkmhucrgolzfesishatccbjztxxzfellglp
 provenance: intent=mock-triage-v1 model=mock-triage-v1 version=mock backend=mock seed=1 sampling=deterministic
 ";
     assert_eq!(out, expected);
