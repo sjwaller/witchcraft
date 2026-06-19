@@ -185,24 +185,125 @@ impl LlamaEngine {
             .unwrap_or_default();
         let mut permitted = Vec::new();
         for cand in candidates {
-            if let Ok(toks) = self.model.str_to_token(&cand, AddBos::Never) {
-                if let Some(tok) = toks.first() {
-                    let data = LlamaTokenData::new(*tok, 1.0, 0.0);
-                    let mut arr = LlamaTokenDataArray::new(vec![data], false);
-                    grammar_sampler.apply(&mut arr);
-                    let logit = arr
-                        .data
-                        .first()
-                        .map(|d| d.logit())
-                        .unwrap_or(f32::NEG_INFINITY);
-                    let forbidden = logit.is_infinite() && logit.is_sign_negative();
-                    if !forbidden {
-                        permitted.push(cand);
-                    }
-                }
+            if !self.token_forbidden(&grammar_sampler, &cand) {
+                permitted.push(cand);
             }
         }
         permitted
+    }
+
+    /// Does `grammar_sampler`, in its current state, forbid the first token of
+    /// `text` (drive its logit to -inf)? Shared by the first-step and the
+    /// list-cardinality-boundary probes.
+    fn token_forbidden(&self, grammar_sampler: &LlamaSampler, text: &str) -> bool {
+        let toks = match self.model.str_to_token(text, AddBos::Never) {
+            Ok(t) => t,
+            Err(_) => return true,
+        };
+        let Some(tok) = toks.first() else {
+            return true;
+        };
+        let data = LlamaTokenData::new(*tok, 1.0, 0.0);
+        let mut arr = LlamaTokenDataArray::new(vec![data], false);
+        grammar_sampler.apply(&mut arr);
+        let logit = arr
+            .data
+            .first()
+            .map(|d| d.logit())
+            .unwrap_or(f32::NEG_INFINITY);
+        logit.is_infinite() && logit.is_sign_negative()
+    }
+
+    /// The LIST-CARDINALITY masking probe (the on-thesis witness for this change).
+    /// For a bounded `list of lo..hi of T`, build a JSON-array prefix of EXACTLY
+    /// `hi` legal elements (no closing bracket), advance the real GBNF sampler
+    /// across that prefix, then ask which of `{",", "]"}` the sampler still
+    /// permits. A strict `0..hi` grammar MUST forbid `,` here (a `,` would open
+    /// the (hi+1)-th element, exceeding the bound) while permitting `]`; a
+    /// weakened `0..hi'` (hi' > hi) still permits `,`. Contrasting the two
+    /// permitted sets is the proof that the COUNT BOUND masked generation
+    /// token-by-token on real weights — the 5th exit is unreachable, not trimmed.
+    ///
+    /// Returns the permitted continuation tokens at the boundary, or an empty
+    /// vec if the prefix could not be established on this tokenizer (the gated
+    /// test then reports that honestly rather than asserting a false witness).
+    fn list_boundary_permitted(&self, grammar: &Grammar) -> Vec<String> {
+        let Grammar::List { elem, hi, .. } = grammar else {
+            return Vec::new();
+        };
+        let gbnf = grammar_to_gbnf(grammar);
+        let mut sampler = match LlamaSampler::grammar(&self.model, &gbnf, "root") {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        // A grammar-legal JSON encoding of a single element.
+        let ej = match element_json(elem) {
+            Some(s) => s,
+            None => return Vec::new(),
+        };
+        let mut prefix = String::from("[");
+        for j in 0..*hi {
+            if j > 0 {
+                prefix.push(',');
+            }
+            prefix.push_str(&ej);
+        }
+        let toks = match self.model.str_to_token(&prefix, AddBos::Never) {
+            Ok(t) => t,
+            Err(_) => return Vec::new(),
+        };
+        // Advance the sampler across the full-length prefix. If any prefix token
+        // is already forbidden, the tokenizer split the bytes across a grammar
+        // boundary and the probe is inconclusive on this model.
+        for t in &toks {
+            let data = LlamaTokenData::new(*t, 1.0, 0.0);
+            let mut arr = LlamaTokenDataArray::new(vec![data], false);
+            sampler.apply(&mut arr);
+            let logit = arr
+                .data
+                .first()
+                .map(|d| d.logit())
+                .unwrap_or(f32::NEG_INFINITY);
+            if logit.is_infinite() && logit.is_sign_negative() {
+                return Vec::new();
+            }
+            sampler.accept(*t);
+        }
+        let mut permitted = Vec::new();
+        for cand in [",", "]"] {
+            if !self.token_forbidden(&sampler, cand) {
+                permitted.push(cand.to_string());
+            }
+        }
+        permitted
+    }
+}
+
+/// A grammar-legal JSON element encoding, matching what `grammar_to_gbnf`
+/// admits, used to build a valid list prefix for the cardinality probe. Returns
+/// `None` for shapes the probe does not synthesise (the probe then reports the
+/// boundary as inconclusive rather than guessing).
+fn element_json(g: &Grammar) -> Option<String> {
+    match g {
+        Grammar::Number { lo, .. } => Some(lo.to_string()),
+        Grammar::Bool => Some("true".to_string()),
+        Grammar::Text { .. } => Some("\"a\"".to_string()),
+        Grammar::OneOf(variants) => {
+            let v = variants.first()?;
+            if v.fields.is_empty() {
+                Some(format!("\"{}\"", v.name))
+            } else {
+                None
+            }
+        }
+        Grammar::Record(fields) => {
+            let mut parts = Vec::with_capacity(fields.len());
+            for (n, sub) in fields {
+                parts.push(format!("\"{n}\":{}", element_json(sub)?));
+            }
+            Some(format!("{{{}}}", parts.join(",")))
+        }
+        Grammar::List { .. } => None,
     }
 }
 
@@ -235,9 +336,26 @@ impl Engine for LlamaEngine {
 
     fn infer_traced(&mut self, req: &InferRequest) -> (InferResult, Option<DecodeTrace>) {
         let permitted = self.permitted_first_step(req.grammar);
-        let result = self.infer(req);
         let chosen = permitted.first().cloned().unwrap_or_default();
-        let trace = vec![DecodeStep { permitted, chosen }];
+        let mut trace = vec![DecodeStep { permitted, chosen }];
+        // For a bounded list, add the cardinality-boundary step so the
+        // falsification harness can witness the COUNT BOUND masking (a strict
+        // grammar forbids `,` after `hi` elements; a weakened larger bound still
+        // permits it). For non-list grammars the first-step structure witness is
+        // sufficient and this adds nothing.
+        if matches!(req.grammar, Grammar::List { .. }) {
+            let boundary = self.list_boundary_permitted(req.grammar);
+            let chosen = boundary
+                .iter()
+                .find(|t| *t == "]")
+                .cloned()
+                .unwrap_or_else(|| boundary.first().cloned().unwrap_or_default());
+            trace.push(DecodeStep {
+                permitted: boundary,
+                chosen,
+            });
+        }
+        let result = self.infer(req);
         (result, Some(trace))
     }
 }

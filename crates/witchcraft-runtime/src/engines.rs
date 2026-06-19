@@ -177,6 +177,7 @@ fn collect_tags(g: &RtGrammar, out: &mut HashMap<String, u32>) {
                 }
             }
         }
+        RtGrammar::List { elem, .. } => collect_tags(elem, out),
         _ => {}
     }
 }
@@ -206,5 +207,10 @@ fn to_fe_grammar(g: &RtGrammar) -> witchcraft::grammar::Grammar {
                 })
                 .collect(),
         ),
+        RtGrammar::List { elem, lo, hi } => Fe::List {
+            elem: Box::new(to_fe_grammar(elem)),
+            lo: *lo,
+            hi: *hi,
+        },
     }
 }

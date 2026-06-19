@@ -379,6 +379,88 @@ divine x: Items from (\"t\") using o
     );
 }
 
+#[test]
+fn unbounded_list_in_divine_output_is_still_rejected_but_bounded_is_allowed() {
+    // The bound is what makes a list an honest divine output: an UNBOUNDED list
+    // has no generation-time stop and must stay a compile error...
+    let err = check_err(
+        "\
+type Exits = list of one_of { North, South, East, West }
+oracle dm = summon \"m\"
+divine e: Exits from (\"x\") using dm
+",
+    );
+    assert!(
+        err.contains("unbounded") && err.contains("length bound"),
+        "unbounded list divine output must be rejected with a bound hint: {err}"
+    );
+    // ...while the BOUNDED form now compiles as a divine output.
+    check_source(
+        "\
+type Exits = list of 0..4 of one_of { North, South, East, West }
+oracle dm = summon \"m\"
+divine e: Exits from (\"x\") using dm with confidence >= 0.0 fallback [North]
+",
+    )
+    .expect("bounded list divine output type-checks");
+}
+
+#[test]
+fn list_upper_bound_over_cap_is_rejected() {
+    let err = check_err(
+        "\
+type Big = list of 0..64 of spark in 0..1
+oracle dm = summon \"m\"
+divine b: Big from (\"x\") using dm with confidence >= 0.0 fallback []
+",
+    );
+    assert!(
+        err.contains("exceeds the generation cap"),
+        "over-cap list bound is rejected: {err}"
+    );
+}
+
+#[test]
+fn bounded_list_divine_output_generates_within_shape_and_count() {
+    // §8 honesty: the guarantee is SHAPE (every element an in-set direction) and
+    // COUNT BOUND (never more than four) — never that the exits are good.
+    let src = "\
+type Room = { exits: list of 0..4 of one_of { North, South, East, West }, danger: spark in 0..3 }
+oracle dm = summon \"m\"
+divine room: Room from (\"x\") using dm with confidence >= 0.0 fallback { exits: [North], danger: 0 }
+speak room.exits
+";
+    check_source(src).expect("record-with-bounded-list divine output type-checks");
+    // Drive several seeds; the count bound and element set must hold for each.
+    for seed in [0u64, 1, 7, 42, 123] {
+        let out = run(
+            src,
+            RunConfig {
+                seed,
+                ..Default::default()
+            },
+        );
+        let line = out.lines().next().expect("exits render");
+        assert!(
+            line.starts_with('[') && line.ends_with(']'),
+            "exits render as a list: {line}"
+        );
+        let inner = line.trim_start_matches('[').trim_end_matches(']').trim();
+        let toks: Vec<&str> = if inner.is_empty() {
+            vec![]
+        } else {
+            inner.split(',').map(|s| s.trim()).collect()
+        };
+        assert!(toks.len() <= 4, "count bound holds (<= 4): {line}");
+        for tok in toks {
+            assert!(
+                ["North", "South", "East", "West"].contains(&tok),
+                "only in-set directions are reachable, got {tok:?} in {line}"
+            );
+        }
+    }
+}
+
 // ---------- capabilities: surface syntax (compile-time only) ----------
 
 #[test]

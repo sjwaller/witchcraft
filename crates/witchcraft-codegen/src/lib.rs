@@ -477,6 +477,11 @@ fn convert_grammar(
                 })
                 .collect(),
         ),
+        Fe::List { elem, lo, hi } => Rt::List {
+            elem: Box::new(convert_grammar(elem, name_to_tag)),
+            lo: *lo,
+            hi: *hi,
+        },
     }
 }
 

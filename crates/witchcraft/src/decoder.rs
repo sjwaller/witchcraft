@@ -105,6 +105,19 @@ impl MockDecoder {
                     provenance: None,
                 }
             }
+            Grammar::List { elem, lo, hi } => {
+                // The cardinality is drawn FIRST (one RNG step), within [lo, hi];
+                // a length outside the bound is unreachable. Then each element is
+                // generated against `elem`. This exact draw order is mirrored by
+                // the compiled runtime decoder so the two paths stay byte-equal.
+                let span = (*hi - *lo) as usize + 1;
+                let n = *lo as usize + self.rng.below(span);
+                let mut out = Vec::with_capacity(n);
+                for _ in 0..n {
+                    out.push(self.gen_value(elem));
+                }
+                Value::List(out)
+            }
         }
     }
 }

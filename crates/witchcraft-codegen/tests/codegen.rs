@@ -165,6 +165,23 @@ speak d.urgency
 }
 
 #[test]
+fn divine_list_field_matches_interpreter() {
+    // A record-with-bounded-list divine output. The compiled runtime decoder and
+    // the interpreter's MockDecoder must draw the SAME length and the SAME
+    // elements in the SAME order (byte-equivalence for list-bearing programs).
+    let src = "\
+type Room = { exits: list of 0..4 of one_of { North, South, East, West }, danger: spark in 0..3 }
+oracle o = summon \"m\"
+divine room: Room from (\"x\") using o with confidence >= 0.0 fallback { exits: [North], danger: 0 }
+speak room.exits
+speak room.danger
+";
+    for seed in [0u64, 1, 7, 42, 123] {
+        assert_eq!(compiled(src, seed), interpreted(src, seed), "seed {seed}");
+    }
+}
+
+#[test]
 fn compiled_litmus_deleting_the_type_changes_generation() {
     // Same program + seed; once with the output type in force, once with it
     // structurally removed (weakened to free text). The compiled artifacts must

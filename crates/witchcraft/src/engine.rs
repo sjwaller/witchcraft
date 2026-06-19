@@ -202,6 +202,14 @@ fn json_convert(json: &serde_json::Value, grammar: &Grammar) -> Option<Value> {
             }
             None
         }
+        Grammar::List { elem, .. } => {
+            let arr = json.as_array()?;
+            let mut out = Vec::with_capacity(arr.len());
+            for item in arr {
+                out.push(json_convert(item, elem)?);
+            }
+            Some(Value::List(out))
+        }
     }
 }
 
@@ -231,6 +239,10 @@ pub fn fallback_value(grammar: &Grammar) -> Value {
                     .collect(),
                 provenance: None,
             }
+        }
+        // The minimum legal cardinality keeps the value in-type by construction.
+        Grammar::List { elem, lo, .. } => {
+            Value::List((0..*lo).map(|_| fallback_value(elem)).collect())
         }
     }
 }
@@ -403,6 +415,33 @@ fn gbnf_rule(grammar: &Grammar) -> String {
                 .collect();
             format!("({})", alts.join(" | "))
         }
+        Grammar::List { elem, lo, hi } => {
+            // Design D3 (approach A): expand the bounded list into a closed
+            // disjunction of fixed-length JSON arrays for each legal cardinality
+            // lo..=hi. There is NO unbounded `*` repetition — an over-length list
+            // is simply not a member of the alternation, so llama.cpp's GBNF
+            // sampler masks it token-by-token (litmus-safe). hi is capped at
+            // compile time (LIST_MAX_HI) to keep this expansion small.
+            let elem_rule = gbnf_rule(elem);
+            let alts: Vec<String> = (*lo..=*hi)
+                .map(|k| {
+                    if k == 0 {
+                        "\"[]\"".to_string()
+                    } else {
+                        let mut parts = vec!["\"[\"".to_string()];
+                        for j in 0..k {
+                            if j > 0 {
+                                parts.push("\",\"".to_string());
+                            }
+                            parts.push(format!("({elem_rule})"));
+                        }
+                        parts.push("\"]\"".to_string());
+                        format!("({})", parts.join(" "))
+                    }
+                })
+                .collect();
+            format!("({})", alts.join(" | "))
+        }
     }
 }
 
@@ -465,6 +504,19 @@ fn json_schema(grammar: &Grammar) -> String {
                 format!("{{\"oneOf\":[{}]}}", alts.join(","))
             }
         }
+        Grammar::List { elem, lo, hi } => {
+            // A bounded JSON array. NOTE: `minItems`/`maxItems` is the schema's
+            // *validate-after* expression of the bound. Whether the provider
+            // honours it DURING generation (litmus-safe) or only checks it after
+            // is decided empirically by the falsification harness — which marks
+            // the frontier engine non-litmus-safe because it exposes no
+            // token-level mask. So this schema does not, by itself, make a
+            // bounded list litmus-safe on a network provider.
+            format!(
+                "{{\"type\":\"array\",\"items\":{},\"minItems\":{lo},\"maxItems\":{hi}}}",
+                json_schema(elem)
+            )
+        }
     }
 }
 
@@ -507,6 +559,34 @@ fn collect_permitted(grammar: &Grammar, steps: &mut Vec<Vec<String>>) {
             // The chosen variant's fields would follow, but for the litmus we
             // only need the closed top-level alternation to contrast against the
             // open weakened set.
+        }
+        Grammar::List { elem, lo, hi } => {
+            // The list's masking lives in its CARDINALITY. We walk a canonical
+            // maximal expansion: at each slot `i`, the decoder faces a
+            // continue/stop decision —
+            //   * `ITEM_i` (emit the (i+1)-th element) is permitted only while
+            //     `i < hi`, so a slot beyond `hi` is forbidden; and
+            //   * `STOP` is permitted only once `i >= lo`, so stopping early is
+            //     forbidden.
+            // Contrasting a strict `0..hi` against a weakened `0..hi'` (hi' > hi)
+            // exposes `ITEM_hi` — the (hi+1)-th element — as a token the weakened
+            // grammar permits but the strict grammar forbids: proof the bound
+            // masked generation, not validated after. After each emittable slot
+            // we recurse into `elem`, so widening the element type (e.g. variants
+            // -> free text) is likewise caught at the element-content step.
+            for i in 0..=*hi {
+                let mut decision = Vec::new();
+                if i < *hi {
+                    decision.push(format!("ITEM_{i}"));
+                }
+                if i >= *lo {
+                    decision.push("STOP".to_string());
+                }
+                steps.push(decision);
+                if i < *hi {
+                    collect_permitted(elem, steps);
+                }
+            }
         }
     }
 }

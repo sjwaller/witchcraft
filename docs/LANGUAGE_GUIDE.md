@@ -300,9 +300,35 @@ type Exits = list of 0..4 of one_of { North, South, East, West }
 ```
 
 `list of T` names an unbounded host-side list whose elements have type `T`.
-`list of lo..hi of T` adds inclusive length bounds — required later when a list
-field appears in a `divine` output type. List **values** still use bracket
-literals: `[North, West]`.
+`list of lo..hi of T` adds inclusive length bounds. List **values** still use
+bracket literals: `[North, West]`.
+
+#### Bounded lists as inference outputs
+
+A list type may be a `divine` output field **only in its bounded form**:
+
+```witchcraft
+type Room = {
+    exits: list of 0..4 of one_of { North, South, East, West },
+    danger: spark in 0..3,
+}
+```
+
+The bound is compiled into the generation grammar, so the model can only emit a
+list whose length is in `[lo, hi]` and whose every element inhabits the element
+type. A fifth exit, or an out-of-set direction, is **unreachable during
+generation** — not trimmed afterward (the §4 discriminator, applied to lists).
+
+An **unbounded** `list of T` as a `divine` output is a compile error: an
+unbounded generation grammar has no natural stop and would force validate-after,
+which the thesis forbids. Bounded is the honest default. The upper bound is
+capped (16 in v0.x) to keep the generation grammar small.
+
+**Honesty (§8).** A bounded list guarantees **shape and count bound only** —
+that every element is in-type and the length is within the declared range. It
+does **not** guarantee the list is sensible, complete, or duplicate-free: a
+`0..4` exit list may legitimately generate as `[]` or `[North, North]`. Good
+gameplay is the program's job, not the type's.
 
 ---
 

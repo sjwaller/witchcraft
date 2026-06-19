@@ -11,6 +11,9 @@ use crate::types::Type;
 const SPARK_DEFAULT_HI: f64 = 100.0;
 /// Bounded-text length for `glyph` outputs.
 const GLYPH_MAX_LEN: usize = 16;
+/// Maximum upper bound for a generated list (design D3/risk: the GBNF length
+/// disjunction is O(hi), so v0.x caps it; bounded dungeon exits are 0..4).
+pub const LIST_MAX_HI: u32 = 16;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Grammar {
@@ -26,6 +29,16 @@ pub enum Grammar {
     },
     Record(Vec<(String, Grammar)>),
     OneOf(Vec<GrammarVariant>),
+    /// A bounded homogeneous list: between `lo` and `hi` (inclusive) elements,
+    /// each inhabiting `elem`. Generation can only emit a legal cardinality, so
+    /// an over-length list is unreachable by construction (the §4 discriminator
+    /// for lists). Only the *bounded* form reaches a `divine` output; unbounded
+    /// `list of T` is rejected at compile time (see [`compile`]).
+    List {
+        elem: Box<Grammar>,
+        lo: u32,
+        hi: u32,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -73,14 +86,53 @@ pub fn compile(ty: &Type, weaken: bool, span: Span) -> Result<Grammar, Diagnosti
             }
             Ok(Grammar::OneOf(gvars))
         }
-        Type::Inferred(_)
-        | Type::Oracle
-        | Type::Embedding(_)
-        | Type::List { .. }
-        | Type::Unit
-        | Type::Unknown => Err(Diagnostic::type_error(
-            format!("type `{}` cannot be a `divine` output type", ty.display()),
+        // A list is a legal `divine` output ONLY in its bounded form. The bound
+        // compiles into the generation grammar so a too-long list is unreachable
+        // (the litmus property for lists). An UNBOUNDED `list of T` has no
+        // natural stop during generation and would force validate-after — so it
+        // stays a compile error on `divine` outputs (the honest default).
+        Type::List {
+            elem,
+            lo: Some(lo),
+            hi: Some(hi),
+        } => {
+            let lo = *lo as i64;
+            let hi = *hi as i64;
+            if lo < 0 || hi < 0 || hi < lo {
+                return Err(Diagnostic::type_error(
+                    format!("list bound {}..{} is not a valid length range", lo, hi),
+                    span,
+                ));
+            }
+            if hi as u32 > LIST_MAX_HI {
+                return Err(Diagnostic::type_error(
+                    format!(
+                        "list upper bound {} exceeds the generation cap of {} \
+                         (use a smaller bound; large bounds blow up the generation grammar)",
+                        hi, LIST_MAX_HI
+                    ),
+                    span,
+                ));
+            }
+            Ok(Grammar::List {
+                elem: Box::new(compile(elem, false, span)?),
+                lo: lo as u32,
+                hi: hi as u32,
+            })
+        }
+        Type::List { .. } => Err(Diagnostic::type_error(
+            format!(
+                "unbounded `{}` cannot be a `divine` output type; give an explicit \
+                 length bound (e.g. `list of 0..4 of ...`) so generation is bounded",
+                ty.display()
+            ),
             span,
         )),
+        Type::Inferred(_) | Type::Oracle | Type::Embedding(_) | Type::Unit | Type::Unknown => {
+            Err(Diagnostic::type_error(
+                format!("type `{}` cannot be a `divine` output type", ty.display()),
+                span,
+            ))
+        }
     }
 }

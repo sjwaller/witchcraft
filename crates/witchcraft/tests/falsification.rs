@@ -122,6 +122,134 @@ fn mock_engine_is_grammar_constrained_and_litmus_safe() {
     );
 }
 
+// ======================================================================
+// add-constrained-list-generation: the LIST litmus (on-thesis).
+// ======================================================================
+
+/// A bounded list of closed variants — the dungeon `exits` shape.
+fn directions() -> Grammar {
+    Grammar::OneOf(vec![
+        GrammarVariant {
+            name: "North".into(),
+            fields: vec![],
+        },
+        GrammarVariant {
+            name: "South".into(),
+            fields: vec![],
+        },
+        GrammarVariant {
+            name: "East".into(),
+            fields: vec![],
+        },
+        GrammarVariant {
+            name: "West".into(),
+            fields: vec![],
+        },
+    ])
+}
+
+fn exits_list(lo: u32, hi: u32) -> Grammar {
+    Grammar::List {
+        elem: Box::new(directions()),
+        lo,
+        hi,
+    }
+}
+
+#[test]
+fn mock_masks_list_cardinality_over_length_is_unreachable() {
+    // The litmus for LIST COUNT: strict `0..4` vs weakened `0..10`, SAME element
+    // type. The proof is NOT a final-string difference — it is that, at the
+    // decode step where a 5th element would begin, the strict grammar FORBIDS
+    // the token the weakened grammar permits. Masking during generation, witnessed.
+    let mut engine = MockEngine::new(7, "DungeonMaster");
+    let outcome = falsify(
+        &mut engine,
+        "DungeonMaster",
+        "you are in a damp cellar",
+        &exits_list(0, 4),
+        &exits_list(0, 10),
+        7,
+    );
+    assert!(
+        outcome.masked,
+        "list cardinality litmus must hold on the Mock: {}",
+        outcome.reason
+    );
+    let witness = outcome.witness.expect("a cardinality masking witness");
+    // The forbidden token is the (hi+1)-th element slot — the 5th exit. The
+    // strict 0..4 grammar cannot open it; the weakened 0..10 grammar can.
+    assert_eq!(
+        witness.forbidden_token, "ITEM_4",
+        "the witness must be the forbidden 5th element (slot 4): {}",
+        outcome.reason
+    );
+}
+
+#[test]
+fn mock_masks_list_element_type_out_of_set_is_unreachable() {
+    // The litmus for LIST ELEMENT TYPE: strict `list of 0..4 of one_of{N,S,E,W}`
+    // vs a weakened list whose elements degrade to free text. At the first
+    // element's content step the strict grammar forbids a letter the weakened
+    // (free-text) element permits — an out-of-set "variant" is unreachable.
+    let weak = Grammar::List {
+        elem: Box::new(Grammar::Text { max_len: 16 }),
+        lo: 0,
+        hi: 4,
+    };
+    let mut engine = MockEngine::new(3, "DungeonMaster");
+    let outcome = falsify(
+        &mut engine,
+        "DungeonMaster",
+        "you are in a damp cellar",
+        &exits_list(0, 4),
+        &weak,
+        3,
+    );
+    assert!(
+        outcome.masked,
+        "list element-type litmus must hold on the Mock: {}",
+        outcome.reason
+    );
+    let witness = outcome.witness.expect("an element-type masking witness");
+    // A lowercase letter the free-text element permits but the closed variant
+    // set forbids.
+    assert!(
+        witness.forbidden_token.len() == 1
+            && witness
+                .forbidden_token
+                .chars()
+                .all(|c| c.is_ascii_lowercase()),
+        "witness names an out-of-set element token: {:?}",
+        witness.forbidden_token
+    );
+}
+
+#[test]
+fn list_gbnf_is_a_closed_length_disjunction_no_unbounded_repeat() {
+    // The GBNF for a bounded list is a closed alternation of fixed lengths —
+    // there is NO unbounded `*`/`+` repetition, so an over-length array is not a
+    // member of the grammar (litmus-safe on llama.cpp by construction).
+    let gbnf = grammar_to_gbnf(&exits_list(0, 2));
+    assert!(
+        !gbnf.contains('*') && !gbnf.contains('+'),
+        "no unbounded repetition in the list GBNF: {gbnf}"
+    );
+    assert!(gbnf.contains("\"[]\""), "empty list is reachable: {gbnf}");
+    // Exactly the declared directions appear as the element alternation.
+    assert!(gbnf.contains("North") && gbnf.contains("West"));
+}
+
+#[test]
+fn list_json_schema_bounds_item_count() {
+    let schema = grammar_to_json_schema(&exits_list(0, 4));
+    assert!(
+        schema.contains("\"type\":\"array\""),
+        "array schema: {schema}"
+    );
+    assert!(schema.contains("\"minItems\":0") && schema.contains("\"maxItems\":4"));
+}
+
 /// THE MAKE-OR-BREAK: run the falsification test against REAL llama.cpp weights,
 /// using its real GBNF sampler — not the Mock. The model is named only in the
 /// manifest (the contract); this test reads the GGUF path from `WITCHCRAFT_GGUF`
@@ -250,5 +378,85 @@ fn real_llama_masks_tokens_during_generation() {
     assert!(
         !witness.forbidden_token.is_empty(),
         "the witness must name a concrete forbidden token"
+    );
+}
+
+/// THE LIST MAKE-OR-BREAK against REAL llama.cpp weights: the strict
+/// `exits: list of 0..4 of one_of {N,S,E,W}` vs a weakened `0..8`, run through
+/// the real GBNF sampler. The headline is the COUNT-BOUND masking witness: after
+/// four legal elements, the strict grammar's sampler drives `,` to -inf (the
+/// fifth exit is unreachable) while the weakened grammar still permits it. Run:
+///
+///   WITCHCRAFT_GGUF=$PWD/models/<model>.gguf \
+///     cargo test --features llama real_llama_masks_list -- --nocapture
+///
+/// §8 honesty: this proves the type masks the COUNT and the element SHAPE — never
+/// that the chosen exits are good gameplay.
+#[cfg(feature = "llama")]
+#[test]
+fn real_llama_masks_list_cardinality() {
+    use witchcraft::engine::falsify;
+    use witchcraft::manifest::Manifest;
+
+    let gguf = match std::env::var("WITCHCRAFT_GGUF") {
+        Ok(p) if !p.is_empty() => p,
+        _ => {
+            eprintln!(
+                "SKIP real_llama_masks_list_cardinality: set WITCHCRAFT_GGUF to a local GGUF \
+                 path to run the list-cardinality litmus against real weights."
+            );
+            return;
+        }
+    };
+
+    let manifest_src = format!(
+        "[need.DungeonMaster]\nengine = \"local-llm\"\nlocality = \"local\"\n\n\
+         [engine.local-llm]\nkind = \"llama\"\ngguf = \"{gguf}\"\n"
+    );
+    let manifest = Manifest::parse(&manifest_src).expect("manifest parses");
+    let policy = witchcraft::engine::Policy::default();
+    let mut engine = manifest
+        .resolve("DungeonMaster", &policy, 7)
+        .unwrap_or_else(|e| panic!("{}", e.message()));
+    assert_eq!(engine.describe().backend_id, "llama");
+
+    let outcome = falsify(
+        engine.as_mut(),
+        "DungeonMaster",
+        "you are in a damp cellar with passages leading away",
+        &exits_list(0, 4),
+        &exits_list(0, 8),
+        7,
+    );
+
+    eprintln!("=== REAL-SAMPLER LIST-CARDINALITY WITNESS (llama.cpp / GBNF) ===");
+    eprintln!("backend : {}", outcome.backend_id);
+    eprintln!("masked  : {}", outcome.masked);
+    eprintln!("reason  : {}", outcome.reason);
+    if let Some(w) = &outcome.witness {
+        eprintln!(
+            "witness : at step {} the strict 0..4 grammar forbade {:?} (a continuation the \
+             weakened 0..8 grammar permitted) — the 5th exit is unreachable on real weights.",
+            w.step, w.forbidden_token
+        );
+    } else {
+        eprintln!(
+            "NOTE: the cardinality boundary was inconclusive on this tokenizer (the JSON prefix \
+             did not split into grammar-aligned tokens); see the structure-level llama witness."
+        );
+    }
+    eprintln!("================================================================");
+
+    assert!(
+        outcome.masked,
+        "LIST LITMUS FAILED against real llama.cpp: {}",
+        outcome.reason
+    );
+    let witness = outcome
+        .witness
+        .expect("a real-sampler list-cardinality witness is recorded");
+    assert!(
+        !witness.forbidden_token.is_empty(),
+        "the witness must name a concrete forbidden continuation token"
     );
 }

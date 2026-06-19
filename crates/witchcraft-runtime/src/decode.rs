@@ -31,6 +31,14 @@ pub enum Grammar {
     },
     Record(Vec<(String, Grammar)>),
     OneOf(Vec<GrammarVariant>),
+    /// A bounded homogeneous list — between `lo` and `hi` elements (inclusive),
+    /// each inhabiting `elem`. Mirrors the frontend `Grammar::List`; an
+    /// over-length list is unreachable during generation.
+    List {
+        elem: Box<Grammar>,
+        lo: u32,
+        hi: u32,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -52,6 +60,7 @@ const TAG_BOOL: u8 = 1;
 const TAG_TEXT: u8 = 2;
 const TAG_RECORD: u8 = 3;
 const TAG_ONEOF: u8 = 4;
+const TAG_LIST: u8 = 5;
 
 /// Serialise a grammar to bytes for embedding in an artifact.
 pub fn encode(g: &Grammar) -> Vec<u8> {
@@ -84,6 +93,12 @@ fn encode_into(g: &Grammar, out: &mut Vec<u8>) {
                 out.extend_from_slice(&v.tag.to_le_bytes());
                 encode_fields(&v.fields, out);
             }
+        }
+        Grammar::List { elem, lo, hi } => {
+            out.push(TAG_LIST);
+            out.extend_from_slice(&lo.to_le_bytes());
+            out.extend_from_slice(&hi.to_le_bytes());
+            encode_into(elem, out);
         }
     }
 }
@@ -175,6 +190,12 @@ impl Reader<'_> {
                     variants.push(GrammarVariant { name, tag, fields });
                 }
                 Grammar::OneOf(variants)
+            }
+            TAG_LIST => {
+                let lo = self.u32();
+                let hi = self.u32();
+                let elem = Box::new(self.grammar());
+                Grammar::List { elem, lo, hi }
             }
             other => panic!("unknown grammar tag {other} in artifact"),
         }
@@ -275,6 +296,18 @@ fn gen_value(rng: &mut Rng, grammar: &Grammar) -> Value {
                 out.push((n.clone(), gen_value(rng, g)));
             }
             value::variant(&v.name, v.tag, out, None)
+        }
+        Grammar::List { elem, lo, hi } => {
+            // IDENTICAL draw order to the interpreter's `MockDecoder` (length
+            // first, then each element) so the compiled and interpreted paths
+            // stay byte-equal. A length outside [lo, hi] is unreachable.
+            let span = (*hi - *lo) as usize + 1;
+            let n = *lo as usize + rng.below(span);
+            let mut out = Vec::with_capacity(n);
+            for _ in 0..n {
+                out.push(gen_value(rng, elem));
+            }
+            value::list(out)
         }
     }
 }
