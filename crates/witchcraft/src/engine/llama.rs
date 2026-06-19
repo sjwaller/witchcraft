@@ -26,6 +26,8 @@ use llama_cpp_2::sampling::LlamaSampler;
 use llama_cpp_2::token::data::LlamaTokenData;
 use llama_cpp_2::token::data_array::LlamaTokenDataArray;
 
+use llama_cpp_2::{send_logs_to_tracing, LogOptions};
+
 use crate::engine::{
     fallback_value, grammar_to_gbnf, json_to_value, DecodeStep, DecodeTrace, Engine,
     EngineDescription, InferRequest, InferResult, LatencyClass, Locality, Modality,
@@ -34,10 +36,37 @@ use crate::grammar::Grammar;
 use crate::manifest::{EngineSpec, NeedBinding};
 use crate::value::{Provenance, Value};
 
-/// The global llama backend (init exactly once per process).
+/// `true` when the user has opted into raw llama.cpp/ggml logging for debugging
+/// via `WITCHCRAFT_LLAMA_VERBOSE=1` (or `true`). Default is fully silent.
+fn llama_verbose() -> bool {
+    std::env::var("WITCHCRAFT_LLAMA_VERBOSE")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+/// Silence llama.cpp's logging by default. llama.cpp emits through TWO separate
+/// channels — the llama log stream and the ggml log stream — and the loudest,
+/// load-time chatter (`llama_model_loader`, `create_tensor`, `load_tensors`,
+/// `ggml_metal_*`, `print_info`) comes from ggml. `send_logs_to_tracing` sets
+/// BOTH `llama_log_set` and `ggml_log_set`; with logs disabled the sink returns
+/// immediately, so every channel is voided (a llama-only silencer misses ggml —
+/// the prior bug). MUST run before the backend initialises and any model loads,
+/// so load-time logging is captured too.
+fn configure_logging() {
+    if !llama_verbose() {
+        send_logs_to_tracing(LogOptions::default().with_logs_enabled(false));
+    }
+}
+
+/// The global llama backend (init exactly once per process). Logging is silenced
+/// (unless `WITCHCRAFT_LLAMA_VERBOSE=1`) *before* `LlamaBackend::init`, so even
+/// backend/Metal init and model-load logs are suppressed.
 fn backend() -> &'static LlamaBackend {
     static B: OnceLock<LlamaBackend> = OnceLock::new();
-    B.get_or_init(|| LlamaBackend::init().expect("llama.cpp backend initialises"))
+    B.get_or_init(|| {
+        configure_logging();
+        LlamaBackend::init().expect("llama.cpp backend initialises")
+    })
 }
 
 pub struct LlamaEngine {
