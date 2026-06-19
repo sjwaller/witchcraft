@@ -1,0 +1,14 @@
+# Binds the dungeon master's inference need to a real local llama.cpp model.
+# The model is named ONLY here, never in the .witch source.
+#
+# Run from the repo root (build witch with the llama feature first):
+#   cargo build --release --features llama
+#   ./target/release/witch run examples/dungeon_master.witch --manifest examples/manifests/dungeon.llama.toml
+
+[need.DungeonMaster]
+engine   = "dm-local"
+locality = "local"
+
+[engine.dm-local]
+kind = "llama"
+gguf = "models/qwen2.5-0.5b-instruct-q4_k_m.gguf"

@@ -358,7 +358,28 @@ pub fn falsify(
 pub fn grammar_to_gbnf(grammar: &Grammar) -> String {
     // The whole grammar inlines into the `root` rule (closed alternations and
     // fixed-key objects), so no helper rules are needed.
-    format!("root ::= {}\n", gbnf_rule(grammar))
+    let body = match grammar {
+        // A bare (root) text output is the weakened / "no type" form: emit
+        // UNQUOTED free prose (a `divine x: glyph` is parsed by `scalar_from_text`,
+        // and this is the open set the litmus contrasts against). Nested `glyph`
+        // fields, by contrast, are quoted JSON strings (see `gbnf_rule`) so the
+        // enclosing object/array stays valid JSON and round-trips through
+        // `json_to_value`.
+        Grammar::Text { max_len } => format!("({})", text_char_classes(*max_len)),
+        _ => gbnf_rule(grammar),
+    };
+    format!("root ::= {body}\n")
+}
+
+/// The optional character classes a bounded `glyph` admits (no surrounding
+/// quotes). The class excludes `"` and `\`, so a quoted JSON string built from
+/// it needs no escaping.
+fn text_char_classes(max_len: usize) -> String {
+    let mut body = String::new();
+    for _ in 0..max_len.max(1) {
+        body.push_str("[a-zA-Z0-9 .,!?]?");
+    }
+    body
 }
 
 fn gbnf_rule(grammar: &Grammar) -> String {
@@ -371,12 +392,12 @@ fn gbnf_rule(grammar: &Grammar) -> String {
         }
         Grammar::Bool => "(\"true\" | \"false\")".to_string(),
         Grammar::Text { max_len } => {
-            // Bounded free text — the weakened/unconstrained form.
-            let mut body = String::new();
-            for _ in 0..(*max_len).max(1) {
-                body.push_str("[a-zA-Z0-9 .,!?]?");
-            }
-            format!("({body})")
+            // A JSON STRING value: the bounded text wrapped in literal double
+            // quotes, so a glyph field inside a record/list produces valid JSON
+            // (`"narration":"..."`, not `"narration":...`). Without the quotes the
+            // enclosing object fails to parse and the whole record decodes to its
+            // empty fallback — the dungeon-master "every field empty" bug.
+            format!("(\"\\\"\" {} \"\\\"\")", text_char_classes(*max_len))
         }
         Grammar::Record(fields) => {
             // A JSON-ish object with fixed keys in order.
