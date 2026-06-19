@@ -21,7 +21,7 @@ use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
 #[allow(deprecated)]
 use llama_cpp_2::model::Special;
-use llama_cpp_2::model::{AddBos, LlamaModel};
+use llama_cpp_2::model::{AddBos, LlamaChatMessage, LlamaChatTemplate, LlamaModel};
 use llama_cpp_2::sampling::LlamaSampler;
 use llama_cpp_2::token::data::LlamaTokenData;
 use llama_cpp_2::token::data_array::LlamaTokenDataArray;
@@ -29,8 +29,9 @@ use llama_cpp_2::token::data_array::LlamaTokenDataArray;
 use llama_cpp_2::{send_logs_to_tracing, LogOptions};
 
 use crate::engine::{
-    fallback_value, grammar_to_gbnf, json_to_value, DecodeStep, DecodeTrace, Engine,
-    EngineDescription, InferRequest, InferResult, LatencyClass, Locality, Modality,
+    fallback_value, grammar_to_gbnf, grammar_to_json_schema, json_to_value, DecodeStep,
+    DecodeTrace, Engine, EngineDescription, InferRequest, InferResult, LatencyClass, Locality,
+    Modality,
 };
 use crate::grammar::Grammar;
 use crate::manifest::{EngineSpec, NeedBinding};
@@ -74,6 +75,13 @@ pub struct LlamaEngine {
     model_id: String,
     sha: String,
     n_ctx: u32,
+    /// The chat template baked into the GGUF (e.g. Qwen's `<|im_start|>` ChatML),
+    /// if any. Instruct models are fine-tuned to require it; feeding a raw,
+    /// un-templated prompt makes them drift, repeat, and cut off mid-word. `None`
+    /// for a base/non-instruct GGUF (no template) — we then send the raw prompt,
+    /// which is what base models expect. Detected from the model, never
+    /// hard-coded, so this is correct for any instruct format llama.cpp knows.
+    chat_template: Option<LlamaChatTemplate>,
 }
 
 impl LlamaEngine {
@@ -85,6 +93,10 @@ impl LlamaEngine {
             .ok_or_else(|| "llama engine spec missing `gguf = \"...path...\"`".to_string())?;
         let model = LlamaModel::load_from_file(backend(), path, &LlamaModelParams::default())
             .map_err(|e| format!("failed to load GGUF model `{path}`: {e}"))?;
+        // Read the model's own chat template from the GGUF metadata. Present for
+        // instruct models (ChatML/Qwen, Llama-3, Mistral, …); absent for base
+        // models. We never assume a format — `None` means raw prompt.
+        let chat_template = model.chat_template(None).ok();
         Ok(LlamaEngine {
             model,
             model_id: if binding.model.is_empty() {
@@ -97,7 +109,41 @@ impl LlamaEngine {
                 .clone()
                 .unwrap_or_else(|| "unknown".to_string()),
             n_ctx: 2048,
+            chat_template,
         })
+    }
+
+    /// Build the prompt tokens the model decodes. For an instruct model (a chat
+    /// template is present), frame the request as a system + user turn and let the
+    /// model open the assistant turn (`add_ass = true`) — the format the model was
+    /// fine-tuned on. The system turn states the task and the exact output shape
+    /// (the JSON Schema for the SAME grammar that constrains generation), so the
+    /// model knows what it is producing; the user turn carries the program's
+    /// `from(...)` context. For a base model (no template) we send the raw prompt.
+    ///
+    /// This changes ONLY the prompt. The GBNF mask on the generated tokens is
+    /// unchanged (see `generate`), so the constraint — and the falsification
+    /// witness, which is derived from the grammar alone — is unaffected.
+    fn build_prompt(&self, req: &InferRequest) -> String {
+        let Some(tmpl) = &self.chat_template else {
+            return req.input.to_string();
+        };
+        let messages = [
+            LlamaChatMessage::new("system".to_string(), system_prompt(req.grammar)),
+            LlamaChatMessage::new("user".to_string(), req.input.to_string()),
+        ];
+        let messages: Result<Vec<_>, _> = messages.into_iter().collect();
+        match messages {
+            // `add_ass = true`: end on the assistant opening tag so the model
+            // generates the assistant turn (and the grammar masks it).
+            Ok(msgs) => self
+                .model
+                .apply_chat_template(tmpl, &msgs, true)
+                .unwrap_or_else(|_| req.input.to_string()),
+            // A NUL byte (or similar) in the context: fall back to the raw prompt
+            // rather than failing the inference.
+            Err(_) => req.input.to_string(),
+        }
     }
 
     fn provenance(&self, intent_id: &str, seed: u64) -> Provenance {
@@ -122,12 +168,19 @@ impl LlamaEngine {
             .new_context(backend(), ctx_params)
             .map_err(|e| format!("context: {e}"))?;
 
+        // Frame the prompt with the model's chat template (instruct models) before
+        // tokenizing. `str_to_token` parses special tokens, so the template's
+        // `<|im_start|>` etc. become the real control tokens. Generation (below)
+        // is unchanged.
+        let prompt = self.build_prompt(req);
         let tokens = self
             .model
-            .str_to_token(req.input, AddBos::Always)
+            .str_to_token(&prompt, AddBos::Always)
             .map_err(|e| format!("tokenize: {e}"))?;
 
-        let mut batch = LlamaBatch::new(512, 1);
+        // The batch must hold the whole prompt before the first decode; a
+        // chat-templated prompt with the schema can exceed the old fixed 512.
+        let mut batch = LlamaBatch::new(tokens.len().max(512), 1);
         let last = tokens.len().saturating_sub(1);
         for (i, t) in tokens.iter().enumerate() {
             batch
@@ -305,6 +358,28 @@ impl LlamaEngine {
             }
         }
         permitted
+    }
+}
+
+/// The system turn for an instruct model: state the task and the exact output
+/// shape so the model produces coherent, on-task content instead of fighting the
+/// mask. A bare-text output (`divine x: glyph`, root [`Grammar::Text`]) is free
+/// prose, so we ask for prose; every other shape is emitted as a JSON value, so
+/// we hand the model the JSON Schema for the SAME grammar that constrains
+/// generation. This only guides the model — the GBNF mask still has the final say.
+fn system_prompt(grammar: &Grammar) -> String {
+    match grammar {
+        Grammar::Text { .. } => "You are the inference engine inside a program. Read the input \
+             and reply with a single short, coherent passage of prose that responds to it. Reply \
+             with only that text — no preamble, labels, or surrounding quotation marks."
+            .to_string(),
+        _ => format!(
+            "You are the inference engine inside a program. Read the input and reply with exactly \
+             one JSON value that conforms to the JSON Schema below. Reply with ONLY the JSON value \
+             — no markdown fences, preamble, or explanation. Write any string fields as coherent, \
+             vivid prose that is consistent with the input.\n\nJSON Schema:\n{}",
+            grammar_to_json_schema(grammar)
+        ),
     }
 }
 
