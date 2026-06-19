@@ -29,6 +29,10 @@ The `witch` CLI SHALL provide a `run` subcommand that type-checks and then execu
 - **WHEN** a user runs `witch run` on a program with a type error
 - **THEN** the CLI reports the type error, does not execute the program, and exits non-zero
 
+#### Scenario: README lists dungeon master
+- **WHEN** a reader views the README examples section
+- **THEN** `examples/dungeon_master.witch` is listed with a one-line description of the listen/divine/enact game loop
+
 ### Requirement: Decoder seed configuration
 The CLI SHALL allow the decoder seed to be specified (e.g. via a flag or environment variable) so that `divine`-using programs execute deterministically and reproducibly.
 

@@ -1,7 +1,8 @@
 //! End-to-end CLI tests: invoke the built `witch` binary like a user would.
 
+use std::io::Write;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 fn witch() -> Command {
     Command::new(env!("CARGO_BIN_EXE_witch"))
@@ -72,6 +73,92 @@ fn run_flagship_example_end_to_end() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("recalled scoped history"));
     assert!(stdout.contains("provenance: intent=mock-triage-v1"));
+}
+
+#[test]
+fn dungeon_master_example_passes_check() {
+    let out = witch()
+        .arg("check")
+        .arg(examples_dir().join("dungeon_master.witch"))
+        .output()
+        .expect("run witch");
+    assert!(
+        out.status.success(),
+        "dungeon master must type-check: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn dungeon_master_runs_with_scripted_stdin() {
+    // The interactive listen -> divine -> enact loop, driven by a fixed stdin
+    // script under a fixed seed. We assert STRUCTURAL markers (the constrained
+    // mechanics), never narrative quality (§8): HP tracking, the bounded `exits`
+    // list, and a terminal banner. On EOF `listen` yields empty input, so a
+    // short script still drives the loop to a clean finish without blocking.
+    let mut child = witch()
+        .args(["run"])
+        .arg(examples_dir().join("dungeon_master.witch"))
+        .args(["--seed", "42"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn witch run");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(b"look around\ngo north\nsearch\nrest\nwait\n")
+        .expect("write stdin");
+    let out = child.wait_with_output().expect("wait witch");
+    assert!(
+        out.status.success(),
+        "dungeon master should run to completion: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("=== THE LOCKED TOWER ==="),
+        "intro: {stdout}"
+    );
+    assert!(stdout.contains("HP: 10"), "HP line present: {stdout}");
+    assert!(
+        stdout.contains("exits:"),
+        "constrained exits printed: {stdout}"
+    );
+    // Some terminal banner is always reached (win, death, or the tower timeout).
+    assert!(
+        stdout.contains("You win!")
+            || stdout.contains("Game over.")
+            || stdout.contains("dawn never comes"),
+        "a terminal banner is reached: {stdout}"
+    );
+}
+
+#[test]
+fn dungeon_master_same_seed_same_script_is_reproducible() {
+    let run = || {
+        let mut child = witch()
+            .args(["run"])
+            .arg(examples_dir().join("dungeon_master.witch"))
+            .args(["--seed", "7"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn");
+        child
+            .stdin
+            .take()
+            .expect("stdin")
+            .write_all(b"a\nb\nc\n")
+            .expect("write");
+        let out = child.wait_with_output().expect("wait");
+        assert!(out.status.success());
+        String::from_utf8_lossy(&out.stdout).to_string()
+    };
+    assert_eq!(run(), run(), "same seed + same script is deterministic");
 }
 
 #[test]

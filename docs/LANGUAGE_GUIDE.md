@@ -447,6 +447,71 @@ for their own enums — extended to a model's output.
 Inside any arm you can refer to `provenance` — a record of which model, version,
 and seed produced this value — useful for audit trails.
 
+### Interactive programs: `listen` → `divine` → `enact`
+
+The three human-and-model seams compose into the canonical interactive loop:
+read a human action with `listen`, ask the model for a **typed turn** with
+`divine`, and let your own code referee the result with `enact`. The shipped
+example is `examples/dungeon_master.witch` — a tiny text adventure where the
+model is the dungeon master.
+
+The shape of a turn is the whole point. Narration is **free** (a `glyph` the
+model improvises); every **mechanical effect is constrained** by its type:
+
+```witchcraft
+type Outcome = one_of {
+  Nothing,
+  Damage(amount: spark in 0..3),   # can never hit you for more than 3
+  Heal(amount: spark in 0..3),
+  FindItem(item: one_of { Key, Torch, Sword, Potion }),
+  Victory, Death,
+}
+
+type Turn = {
+  narration: glyph,                                       # free-form
+  outcome:   Outcome,                                     # constrained effect
+  exits:     list of 0..4 of one_of { North, South, East, West },  # at most four
+  danger:    spark in 0..10,
+}
+```
+
+The loop reads, divines, and dispatches:
+
+```witchcraft
+while turn_no < 12 and not won and not dead {
+  let action = listen("> what do you do? ")
+  divine t: Turn from (action, hp) using dm
+    with confidence >= 0.0
+    fallback { narration: "Nothing happens.", outcome: Nothing, exits: [North], danger: 1 }
+  speak t.narration
+  enact t.outcome {
+    Damage(amount) => { hp = hp - amount }
+    # ... one arm per outcome; the compiler enforces exhaustiveness ...
+  }
+  speak "  exits: ${t.exits}"          # the bounded list, printed by your code
+}
+```
+
+Why this is AI-native rather than "an SDK with a prompt":
+
+- `listen` is the **only** way text enters from the human, and `speak` the only
+  way it leaves — the human boundary is explicit (§7).
+- The model **cannot** hit you for 5, invent a fifth exit, or return a
+  non-direction: `Damage`'s `spark in 0..3`, the bounded `list of 0..4`, and the
+  closed `one_of` are masked **during generation**, not validated afterward
+  (§4). Delete a bound and generation genuinely changes (§6.3).
+- **Honesty (§8):** the types guarantee *shape and bound only* — never that the
+  dungeon master tells a good story, picks sensible exits, or plays fair. Under
+  the offline Mock engine the narration is deterministic gibberish; the
+  *mechanics* are exactly as constrained as the types say. Good gameplay is a
+  model-quality question the type system makes no claim about.
+
+Run it with piped input (or interactively):
+
+```bash
+printf 'look\ngo north\nsearch\n' | witch run examples/dungeon_master.witch --seed 42
+```
+
 ---
 
 ## 5. State and retrieval

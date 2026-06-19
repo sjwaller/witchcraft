@@ -354,6 +354,7 @@ crates/
 examples/             # sample programs
   triage_flagship.witch   # the full example: all four primitives together
   triage.witch
+  dungeon_master.witch    # interactive listen -> divine -> enact game loop
   strict_divine.witch     # demonstrates permit(network) + the strict-engine refusal
   host.witch              # plain host-language features
   manifests/              # example engine bindings (laptop/llama/cloud/frontier)

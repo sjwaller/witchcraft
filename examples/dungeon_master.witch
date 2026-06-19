@@ -14,7 +14,7 @@ type Outcome = one_of {
 type Turn = {
   narration:   glyph,                      # the DM improvises freely here
   outcome:     Outcome,                     # but the EFFECT is constrained
-  exits:       list of one_of { North, South, East, West },
+  exits:       list of 0..4 of one_of { North, South, East, West },
   danger:      spark in 0..10               # mood/tension, model's call
 }
 
