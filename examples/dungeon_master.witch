@@ -1,0 +1,78 @@
+oracle dm = summon "DungeonMaster"
+
+# What the DM is allowed to do each turn. Narration is free (glyph),
+# but every mechanical effect is constrained so the model can't cheat.
+type Outcome = one_of {
+  Nothing,
+  Damage(amount: spark in 0..3),          # can never hit you for more than 3
+  Heal(amount: spark in 0..3),
+  FindItem(item: one_of { Key, Torch, Sword, Potion }),  # only real items
+  Victory,
+  Death
+}
+
+type Turn = {
+  narration:   glyph,                      # the DM improvises freely here
+  outcome:     Outcome,                     # but the EFFECT is constrained
+  exits:       list of one_of { North, South, East, West },
+  danger:      spark in 0..10               # mood/tension, model's call
+}
+
+fn play() {
+  var hp = 10
+  var inventory = ""           # simple text log of items found
+  var turn_no = 0
+  var won = false
+  var dead = false
+
+  print "=== THE LOCKED TOWER ==="
+  print "You wake in a cold stone cell. HP: ${hp}"
+  print ""
+
+  while turn_no < 12 and not won and not dead {
+    let action = input("> what do you do? ")
+
+    # Ask the DM to narrate AND return a constrained move.
+    # The "question" is the player's action + their current state.
+    divine t: Turn
+      from (action, hp, inventory, turn_no)
+      using dm
+      with confidence >= 0.0
+      fallback { narration: "The shadows shift, but nothing happens.", outcome: Nothing, exits: [North], danger: 1 }
+
+    print ""
+    print t.narration                      # the fun, free-form part
+    print "  (danger sense: ${t.danger}/10)"
+
+    # YOUR CODE referees the constrained outcome — the model can't fudge these:
+    enact t.outcome {
+      Nothing => { }
+      Damage(amount) => {
+        hp = hp - amount
+        print "  you take ${amount} damage. HP: ${hp}"
+        if hp <= 0 { dead = true }
+      }
+      Heal(amount) => {
+        hp = hp + amount
+        print "  you recover ${amount}. HP: ${hp}"
+      }
+      FindItem(item) => {
+        print "  you found: ${item}"
+        inventory = "${inventory} ${item}"
+      }
+      Victory => { won = true }
+      Death   => { dead = true }
+    }
+
+    # exits printed by your code, from the constrained list:
+    print "  exits: ${t.exits}"
+    turn_no = turn_no + 1
+    print ""
+  }
+
+  if won  { print "*** You escaped the tower. You win! ***" }
+  if dead { print "*** You died in the dark. Game over. ***" }
+  if not won and not dead { print "*** The tower claims you as dawn never comes... ***" }
+}
+
+play()
