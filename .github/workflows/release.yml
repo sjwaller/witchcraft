@@ -2,8 +2,8 @@ name: Release
 
 # Build self-contained binaries for every supported platform on a version tag,
 # gate on a host-independent test suite (excluding grimoire's native-build link
-# tests — those live in ci.yml on a native runner), and publish archives +
-# checksums as release assets.
+# tests and witchcraft-codegen's JIT integration tests — those live in ci.yml on
+# a native runner), and publish archives + checksums as release assets.
 # This workflow is the ONLY place Rust is required; users download the results.
 
 on:
@@ -61,12 +61,12 @@ jobs:
 
       # Cross-arch targets are built and packaged but not test-run: the runner
       # cannot execute cross-arch test binaries. Native-arch targets run the
-      # workspace suite EXCLUDING grimoire (see Test step) — grimoire's
-      # compile-and-link integration tests depend on the host linker and are
-      # gated in ci.yml instead.
+      # workspace suite EXCLUDING grimoire and witchcraft-codegen (see Test
+      # step): grimoire's compile-and-link tests and codegen's Cranelift JIT
+      # integration tests are host-environment sensitive and gated in ci.yml.
       - name: Test
         if: matrix.native_test
-        run: cargo test --release --locked --target ${{ matrix.target }} --workspace --exclude grimoire
+        run: cargo test --release --locked --target ${{ matrix.target }} --workspace --exclude grimoire --exclude witchcraft-codegen
 
       - name: Build
         if: "!matrix.use_cross"

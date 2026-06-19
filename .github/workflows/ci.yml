@@ -2,9 +2,10 @@ name: CI
 
 # Full workspace validation on native-arch runners. This is where grimoire's
 # native-build integration tests (crates/grimoire/tests/build.rs — compile a
-# .witch to a native binary and assert compiled == interpreted) gate merges.
-# The Release workflow builds and packages grimoire for every target but does
-# NOT run those link-sensitive tests in the cross-platform matrix.
+# .witch to a native binary and assert compiled == interpreted) and
+# witchcraft-codegen's Cranelift JIT integration tests (tests/codegen.rs) gate
+# merges. The Release workflow builds and packages binaries for every target but
+# does NOT run those host-environment-sensitive suites in the release matrix.
 
 on:
   push:
