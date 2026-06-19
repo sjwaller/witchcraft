@@ -29,7 +29,7 @@ use llama_cpp_2::token::data_array::LlamaTokenDataArray;
 use llama_cpp_2::{send_logs_to_tracing, LogOptions};
 
 use crate::engine::{
-    fallback_value, grammar_to_gbnf, grammar_to_json_schema, json_to_value, DecodeStep,
+    fallback_value, grammar_to_gbnf, grammar_to_prompt_schema, json_to_value, DecodeStep,
     DecodeTrace, Engine, EngineDescription, InferRequest, InferResult, LatencyClass, Locality,
     Modality,
 };
@@ -378,7 +378,7 @@ fn system_prompt(grammar: &Grammar) -> String {
              one JSON value that conforms to the JSON Schema below. Reply with ONLY the JSON value \
              — no markdown fences, preamble, or explanation. Write any string fields as coherent, \
              vivid prose that is consistent with the input.\n\nJSON Schema:\n{}",
-            grammar_to_json_schema(grammar)
+            grammar_to_prompt_schema(grammar)
         ),
     }
 }

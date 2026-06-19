@@ -177,6 +177,7 @@ fn json_convert(json: &serde_json::Value, grammar: &Grammar) -> Option<Value> {
             })
         }
         Grammar::OneOf(variants) => {
+            // Bare variant as a plain string (llama GBNF form: `"Name"`).
             if let Some(name) = json.as_str() {
                 let v = variants
                     .iter()
@@ -187,6 +188,22 @@ fn json_convert(json: &serde_json::Value, grammar: &Grammar) -> Option<Value> {
                     provenance: None,
                 });
             }
+            // Discriminator-tagged object (frontier OpenAI-strict form:
+            // `{"tag":"Name", <payload fields…>}`). Payload fields are siblings
+            // of `tag`, matching `grammar_to_json_schema`'s `anyOf` branches.
+            if let Some(tag) = json.get("tag").and_then(|t| t.as_str()) {
+                let v = variants.iter().find(|v| v.name == tag)?;
+                let mut out = Vec::with_capacity(v.fields.len());
+                for (fname, fsub) in &v.fields {
+                    out.push((fname.clone(), json_convert(json.get(fname)?, fsub)?));
+                }
+                return Some(Value::Variant {
+                    name: v.name.clone(),
+                    fields: out,
+                    provenance: None,
+                });
+            }
+            // Nested-key object (llama GBNF form: `{"Name":{ fields }}`).
             for v in variants {
                 if let Some(obj) = json.get(&v.name) {
                     let mut out = Vec::with_capacity(v.fields.len());
@@ -467,14 +484,93 @@ fn gbnf_rule(grammar: &Grammar) -> String {
 }
 
 /// Compile a Witchcraft [`Grammar`] into a JSON Schema — the structured-output
-/// format a frontier provider enforces. Whether the provider enforces it *during*
-/// generation (litmus-safe) or only validates-after is decided empirically by the
-/// falsification test, not by this mapping. Pure and testable.
+/// format a frontier provider enforces. Emits the **OpenAI strict** dialect:
+/// every object lists all of its properties in `required` and sets
+/// `additionalProperties: false`, and a variant (`one_of`) is an `anyOf` of
+/// discriminator-tagged objects (`{"tag":"<Variant>", <payload…>}`) rather than
+/// `oneOf` (which OpenAI strict mode forbids). Whether the provider enforces it
+/// *during* generation (litmus-safe) or only validates-after is decided
+/// empirically by the falsification test, not by this mapping. Pure and testable.
 pub fn grammar_to_json_schema(grammar: &Grammar) -> String {
-    json_schema(grammar)
+    json_schema_strict(grammar)
 }
 
-fn json_schema(grammar: &Grammar) -> String {
+/// A closed, strict JSON-Schema object from `(name, sub-schema)` pairs: every
+/// property is `required` and `additionalProperties` is `false` — what OpenAI
+/// strict mode demands of *every* object in the schema.
+fn strict_object(props: &[(String, String)]) -> String {
+    let props_str: Vec<String> = props.iter().map(|(n, s)| format!("\"{n}\":{s}")).collect();
+    let required: Vec<String> = props.iter().map(|(n, _)| format!("\"{n}\"")).collect();
+    format!(
+        "{{\"type\":\"object\",\"properties\":{{{}}},\"required\":[{}],\"additionalProperties\":false}}",
+        props_str.join(","),
+        required.join(",")
+    )
+}
+
+fn json_schema_strict(grammar: &Grammar) -> String {
+    match grammar {
+        Grammar::Number { lo, hi } => {
+            format!("{{\"type\":\"integer\",\"minimum\":{lo},\"maximum\":{hi}}}")
+        }
+        Grammar::Bool => "{\"type\":\"boolean\"}".to_string(),
+        Grammar::Text { max_len } => {
+            format!("{{\"type\":\"string\",\"maxLength\":{max_len}}}")
+        }
+        Grammar::Record(fields) => {
+            let props: Vec<(String, String)> = fields
+                .iter()
+                .map(|(n, g)| (n.clone(), json_schema_strict(g)))
+                .collect();
+            strict_object(&props)
+        }
+        Grammar::OneOf(variants) => {
+            // `anyOf` of discriminator-tagged closed objects. A bare variant is
+            // `{tag:{const:"Name"}}`; a payload variant adds its fields. Every
+            // branch is a strict object (all props required, no extras), so the
+            // whole union satisfies OpenAI strict mode (which rejects `oneOf`).
+            let branches: Vec<String> = variants
+                .iter()
+                .map(|v| {
+                    let mut props: Vec<(String, String)> =
+                        vec![("tag".to_string(), format!("{{\"const\":\"{}\"}}", v.name))];
+                    for (fname, fsub) in &v.fields {
+                        props.push((fname.clone(), json_schema_strict(fsub)));
+                    }
+                    strict_object(&props)
+                })
+                .collect();
+            format!("{{\"anyOf\":[{}]}}", branches.join(","))
+        }
+        Grammar::List { elem, lo, hi } => {
+            // A bounded JSON array. NOTE: `minItems`/`maxItems` is the schema's
+            // *validate-after* expression of the bound. Whether the provider
+            // honours it DURING generation (litmus-safe) or only checks it after
+            // is decided empirically by the falsification harness — which marks
+            // the frontier engine non-litmus-safe because it exposes no
+            // token-level mask. So this schema does not, by itself, make a
+            // bounded list litmus-safe on a network provider.
+            format!(
+                "{{\"type\":\"array\",\"items\":{},\"minItems\":{lo},\"maxItems\":{hi}}}",
+                json_schema_strict(elem)
+            )
+        }
+    }
+}
+
+/// A JSON-Schema sketch for the *llama* system prompt — describes the shape the
+/// GBNF actually emits (a bare variant is the string `"Name"`, a payload variant
+/// the nested object `{"Name":{…}}`), so the local model is guided toward the
+/// form its grammar mask enforces. Distinct from [`grammar_to_json_schema`],
+/// whose OpenAI-strict tagged form is a *different* wire shape; using the strict
+/// schema here would describe a layout the GBNF forbids. Prompt-only guidance.
+#[cfg(feature = "llama")]
+pub fn grammar_to_prompt_schema(grammar: &Grammar) -> String {
+    json_schema_gbnf_shaped(grammar)
+}
+
+#[cfg(feature = "llama")]
+fn json_schema_gbnf_shaped(grammar: &Grammar) -> String {
     match grammar {
         Grammar::Number { lo, hi } => {
             format!("{{\"type\":\"integer\",\"minimum\":{lo},\"maximum\":{hi}}}")
@@ -486,18 +582,14 @@ fn json_schema(grammar: &Grammar) -> String {
         Grammar::Record(fields) => {
             let props: Vec<String> = fields
                 .iter()
-                .map(|(n, g)| format!("\"{n}\":{}", json_schema(g)))
+                .map(|(n, g)| format!("\"{n}\":{}", json_schema_gbnf_shaped(g)))
                 .collect();
-            let required: Vec<String> = fields.iter().map(|(n, _)| format!("\"{n}\"")).collect();
             format!(
-                "{{\"type\":\"object\",\"properties\":{{{}}},\"required\":[{}],\"additionalProperties\":false}}",
-                props.join(","),
-                required.join(",")
+                "{{\"type\":\"object\",\"properties\":{{{}}}}}",
+                props.join(",")
             )
         }
         Grammar::OneOf(variants) => {
-            // A closed enum of variant names (payload-carrying variants map to a
-            // oneOf of tagged objects).
             let simple: Vec<&str> = variants
                 .iter()
                 .filter(|v| v.fields.is_empty())
@@ -513,7 +605,7 @@ fn json_schema(grammar: &Grammar) -> String {
                         let props: Vec<String> = v
                             .fields
                             .iter()
-                            .map(|(n, g)| format!("\"{n}\":{}", json_schema(g)))
+                            .map(|(n, g)| format!("\"{n}\":{}", json_schema_gbnf_shaped(g)))
                             .collect();
                         format!(
                             "{{\"type\":\"object\",\"properties\":{{\"{}\":{{\"type\":\"object\",\"properties\":{{{}}}}}}}}}",
@@ -525,19 +617,10 @@ fn json_schema(grammar: &Grammar) -> String {
                 format!("{{\"oneOf\":[{}]}}", alts.join(","))
             }
         }
-        Grammar::List { elem, lo, hi } => {
-            // A bounded JSON array. NOTE: `minItems`/`maxItems` is the schema's
-            // *validate-after* expression of the bound. Whether the provider
-            // honours it DURING generation (litmus-safe) or only checks it after
-            // is decided empirically by the falsification harness — which marks
-            // the frontier engine non-litmus-safe because it exposes no
-            // token-level mask. So this schema does not, by itself, make a
-            // bounded list litmus-safe on a network provider.
-            format!(
-                "{{\"type\":\"array\",\"items\":{},\"minItems\":{lo},\"maxItems\":{hi}}}",
-                json_schema(elem)
-            )
-        }
+        Grammar::List { elem, lo, hi } => format!(
+            "{{\"type\":\"array\",\"items\":{},\"minItems\":{lo},\"maxItems\":{hi}}}",
+            json_schema_gbnf_shaped(elem)
+        ),
     }
 }
 

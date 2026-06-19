@@ -102,13 +102,27 @@ fn gbnf_closes_variants_and_bounds_numbers() {
 }
 
 #[test]
-fn json_schema_encodes_range_and_enum() {
+fn json_schema_encodes_range_and_strict_variant() {
     let g = real_grammar();
     let schema = grammar_to_json_schema(&g);
     assert!(schema.contains("\"minimum\":0") && schema.contains("\"maximum\":10"));
+    // OpenAI strict: a variant is `anyOf` of discriminator-tagged closed objects
+    // (NOT `oneOf`, which strict mode forbids), and every object is closed.
     assert!(
-        schema.contains("\"enum\""),
-        "variant action maps to an enum: {schema}"
+        schema.contains("\"anyOf\""),
+        "variant action maps to anyOf: {schema}"
+    );
+    assert!(
+        !schema.contains("\"oneOf\""),
+        "oneOf is forbidden in OpenAI strict mode: {schema}"
+    );
+    assert!(
+        schema.contains("\"tag\":{\"const\":\"Draft\"}"),
+        "each branch carries a tag discriminator: {schema}"
+    );
+    assert!(
+        schema.contains("\"additionalProperties\":false"),
+        "every object is closed: {schema}"
     );
 }
 
@@ -311,6 +325,45 @@ fn record_with_glyph_round_trips_through_json() {
         rendered.contains("North") && rendered.contains("East"),
         "exits are populated: {rendered}"
     );
+}
+
+/// `json_to_value` parses BOTH variant wire forms: the frontier OpenAI-strict
+/// discriminator-tagged object (`{"tag":"Slip","detail":…}`) and the llama GBNF
+/// forms (a bare `"Name"` string, a nested `{"Name":{…}}` object). The frontier
+/// schema fix changed the schema, not the parser's tolerance — both must work.
+#[cfg(any(feature = "llama", feature = "frontier"))]
+#[test]
+fn variant_parses_from_both_tagged_and_nested_forms() {
+    use witchcraft::engine::json_to_value;
+    let tell = Grammar::OneOf(vec![
+        GrammarVariant {
+            name: "Nothing".into(),
+            fields: vec![],
+        },
+        GrammarVariant {
+            name: "Slip".into(),
+            fields: vec![("detail".into(), Grammar::Text { max_len: 160 })],
+        },
+    ]);
+
+    // Frontier OpenAI-strict tagged form: payload fields are siblings of `tag`.
+    let tagged = json_to_value("{\"tag\":\"Slip\",\"detail\":\"the safe\"}", &tell)
+        .expect("tagged payload variant parses");
+    assert!(
+        tagged.display().contains("Slip") && tagged.display().contains("the safe"),
+        "tagged variant carries its payload: {}",
+        tagged.display()
+    );
+    let tagged_bare =
+        json_to_value("{\"tag\":\"Nothing\"}", &tell).expect("tagged bare variant parses");
+    assert!(tagged_bare.display().contains("Nothing"));
+
+    // llama GBNF forms still parse (the parser stayed permissive).
+    let nested = json_to_value("{\"Slip\":{\"detail\":\"the safe\"}}", &tell)
+        .expect("nested payload variant parses");
+    assert!(nested.display().contains("Slip") && nested.display().contains("the safe"));
+    let string_bare = json_to_value("\"Nothing\"", &tell).expect("bare variant as a string parses");
+    assert!(string_bare.display().contains("Nothing"));
 }
 
 /// THE MAKE-OR-BREAK: run the falsification test against REAL llama.cpp weights,
