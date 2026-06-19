@@ -1,0 +1,94 @@
+# Frontier detective game — pushing a rich, branching divine type against a
+# capable cloud model. The suspect's SPEECH is free (glyph), but every
+# mechanical fact your code acts on is constrained: demeanour, whether they
+# lied, stress level, and a branching "tell" the interrogation logic reads.
+#
+#   export OPENAI_API_KEY="<your-openai-api-key>"
+#   witch run examples/detective.witch --manifest examples/manifests/detective.openai.toml
+# (build with --features frontier)
+
+type Tell = one_of {
+    Nothing,
+    Slip(detail: glyph),                 # accidentally reveals something
+    Deflect(topic: glyph),               # changes the subject
+    Accuse(who: glyph),                  # points the finger elsewhere
+    Confess(crime: glyph)                # cracks
+}
+
+type Reply = {
+    speech:     glyph,                   # what the suspect actually says (free)
+    demeanour:  one_of { Calm, Defensive, Nervous, Hostile, Broken },
+    lying:      bool,                    # are they lying this turn?
+    stress:     spark in 0..10,          # rising tension
+    tell:       Tell,                    # the branching mechanical reveal
+    clues_left: spark in 0..5            # how many secrets remain
+}
+
+oracle suspect = summon "Suspect"
+
+define interrogate() {
+    var pressure = 0
+    var cracked = false
+    var turn = 0
+
+    speak "=== THE INTERROGATION ==="
+    speak "Suspect: Marlene Vasquez. A body in the library. She says she's innocent."
+    speak "Press her. (type your questions)"
+    speak ""
+
+    with grant permit(network) {
+        with grant permit(unsafe_inference) {
+            while turn < 8 and not cracked {
+                let question = listen("> ask: ")
+
+                divine r: Reply
+                    from (question, pressure, turn)
+                    using suspect
+                    with confidence >= 0.0
+                    fallback {
+                        speech: "I have nothing to say.",
+                        demeanour: Defensive,
+                        lying: false,
+                        stress: 0,
+                        tell: Nothing,
+                        clues_left: 5
+                    }
+
+                speak ""
+                speak "Marlene: \"${r.speech}\""
+                speak "  [${r.demeanour}, stress ${r.stress}/10, clues left: ${r.clues_left}]"
+
+                # YOUR code referees the constrained mechanics:
+                if r.lying {
+                    pressure = pressure + 2
+                    speak "  (you sense a lie — pressure rises)"
+                } else {
+                    pressure = pressure + 1
+                }
+
+                # branch on the constrained tell:
+                enact r.tell {
+                    Nothing => { }
+                    Slip(detail) => { speak "  >> SLIP: ${detail}" }
+                    Deflect(topic) => { speak "  >> she deflects to: ${topic}" }
+                    Accuse(who) => { speak "  >> she accuses: ${who}" }
+                    Confess(crime) => {
+                        speak "  >> CONFESSION: ${crime}"
+                        cracked = true
+                    }
+                }
+
+                turn = turn + 1
+                speak ""
+            }
+        }
+    }
+
+    if cracked {
+        speak "*** She cracked. Case closed. ***"
+    } else {
+        speak "*** She held firm. The case goes cold. ***"
+    }
+}
+
+interrogate()

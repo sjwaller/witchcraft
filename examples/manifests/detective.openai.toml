@@ -1,0 +1,8 @@
+[need.Suspect]
+engine   = "suspect-openai"
+model    = "gpt-4o-mini"
+locality = "network"
+
+[engine.suspect-openai]
+kind        = "openai"
+api_key_env = "OPENAI_API_KEY"

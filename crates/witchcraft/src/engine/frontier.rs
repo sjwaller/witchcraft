@@ -104,9 +104,18 @@ impl Engine for FrontierEngine {
         });
 
         let value = match call_provider(&self.endpoint, &api_key, &body) {
-            Ok(json_text) => json_to_value(&json_text, req.grammar)
-                .unwrap_or_else(|| fallback_value(req.grammar)),
-            Err(_) => fallback_value(req.grammar),
+            Ok(resp) => json_to_value(&resp, req.grammar).unwrap_or_else(|| {
+                if frontier_verbose() {
+                    eprintln!("frontier: response did not parse; raw = {resp:?}");
+                }
+                fallback_value(req.grammar)
+            }),
+            Err(e) => {
+                if frontier_verbose() {
+                    eprintln!("frontier error: {e:?}");
+                }
+                fallback_value(req.grammar)
+            }
         };
 
         InferResult {
@@ -123,16 +132,33 @@ impl Engine for FrontierEngine {
     // falsification test correctly marks this engine non-litmus-safe.
 }
 
+/// `true` when the user has opted into frontier request/response debugging via
+/// `WITCHCRAFT_FRONTIER_VERBOSE=1` (or `true`). Default is quiet — the HTTP error
+/// body is still threaded into the returned error, just not printed. Mirrors the
+/// `WITCHCRAFT_LLAMA_VERBOSE` escape hatch.
+fn frontier_verbose() -> bool {
+    std::env::var("WITCHCRAFT_FRONTIER_VERBOSE")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
 fn call_provider(
     endpoint: &str,
     api_key: &str,
     body: &serde_json::Value,
 ) -> Result<String, String> {
-    let resp = ureq::post(endpoint)
+    let resp = match ureq::post(endpoint)
         .set("authorization", &format!("Bearer {api_key}"))
         .set("content-type", "application/json")
         .send_json(body.clone())
-        .map_err(|e| e.to_string())?;
+    {
+        Ok(r) => r,
+        Err(ureq::Error::Status(code, r)) => {
+            let body = r.into_string().unwrap_or_default();
+            return Err(format!("status {code}: {body}"));
+        }
+        Err(e) => return Err(e.to_string()),
+    };
     let parsed: serde_json::Value = resp.into_json().map_err(|e| e.to_string())?;
     // OpenAI-style: choices[0].message.content holds the JSON string.
     parsed

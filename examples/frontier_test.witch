@@ -1,0 +1,39 @@
+# Frontier engine verification — the cloud-inference path, run live.
+#
+# A frontier API is NON-LITMUS-SAFE: it enforces the output type as a server-side
+# JSON schema, with no observable token-level mask. Witchcraft cannot PROVE the
+# constraint held, so a strict `divine` refuses such an engine by default. This
+# site grants BOTH required capabilities, in the source, where a reviewer sees them:
+#   permit(network)           — allow reaching the network (off by default)
+#   permit(unsafe_inference)  — explicitly accept the §8 limit: structure enforced
+#                               by the provider, not proven locally
+#
+#   export OPENAI_API_KEY="<your-openai-api-key>"
+#   witch run examples/frontier_test.witch --manifest examples/manifests/sentiment.openai.toml
+# (build with --features frontier)
+
+type Reading = {
+    sentiment: one_of { Positive, Neutral, Negative },
+    intensity: spark in 0..10,
+    topic:     one_of { Billing, Product, Support, Adult, Other }
+}
+
+oracle classifier = summon "SentimentReader"
+
+with grant permit(network) {
+    with grant permit(unsafe_inference) {
+        divine r: Reading
+            from ("I love you as it saves me money")
+            using classifier
+            with confidence >= 0.0
+            fallback {
+                sentiment: Neutral,
+                intensity: 0,
+                topic: Other
+            }
+
+        speak "sentiment: ${r.sentiment}"
+        speak "intensity: ${r.intensity}/10"
+        speak "topic:     ${r.topic}"
+    }
+}

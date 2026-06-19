@@ -1,0 +1,12 @@
+# Binds the SentimentReader need to OpenAI's API (structured outputs).
+# Non-litmus-safe: sends the output type as a strict JSON schema and trusts the
+# provider to honour it server-side. Requires OPENAI_API_KEY in the environment.
+
+[need.SentimentReader]
+engine   = "sentiment-openai"
+model    = "gpt-4o-mini"
+locality = "network"
+
+[engine.sentiment-openai]
+kind        = "openai"
+api_key_env = "OPENAI_API_KEY"

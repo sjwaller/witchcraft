@@ -1,0 +1,7 @@
+[need.DungeonMaster]
+engine   = "dm-api"
+locality = "network"
+
+[engine.dm-api]
+kind  = "frontier"
+model = "gpt-4o-mini"
