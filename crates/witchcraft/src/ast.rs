@@ -94,6 +94,13 @@ pub enum TypeExpr {
     Record(Vec<(String, TypeExpr)>, Span),
     /// `one_of { A, B(field: T), ... }`
     OneOf(Vec<VariantDef>, Span),
+    /// `list of T` or `list of lo..hi of T`
+    List {
+        elem: Box<TypeExpr>,
+        lo: Option<f64>,
+        hi: Option<f64>,
+        span: Span,
+    },
 }
 
 impl TypeExpr {
@@ -102,7 +109,8 @@ impl TypeExpr {
             TypeExpr::Named(_, s)
             | TypeExpr::Refined { span: s, .. }
             | TypeExpr::Record(_, s)
-            | TypeExpr::OneOf(_, s) => *s,
+            | TypeExpr::OneOf(_, s)
+            | TypeExpr::List { span: s, .. } => *s,
         }
     }
 }

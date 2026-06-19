@@ -80,6 +80,11 @@ pub fn resolve_type(te: &TypeExpr, types: &HashMap<String, Type>) -> Result<Type
             }
             Ok(Type::Sum(out))
         }
+        TypeExpr::List { elem, lo, hi, .. } => Ok(Type::List {
+            elem: Box::new(resolve_type(elem, types)?),
+            lo: *lo,
+            hi: *hi,
+        }),
     }
 }
 
@@ -424,6 +429,11 @@ impl Checker {
 
     fn check_divine(&mut self, d: &DivineStmt) {
         let out = resolve_type(&d.out_ty, &self.types).unwrap_or(Type::Unknown);
+        if !matches!(out, Type::Unknown) {
+            if let Err(diag) = crate::grammar::compile(&out, false, d.out_ty.span()) {
+                self.diags.push(diag);
+            }
+        }
         // The oracle must be an oracle value.
         match self.lookup(&d.oracle) {
             Some(Type::Oracle) | Some(Type::Unknown) => {}
@@ -550,6 +560,25 @@ impl Checker {
         }
         if let (Expr::Record { fields, span }, Type::Record(_)) = (e, expected) {
             self.check_record_literal(fields, expected, *span);
+            return;
+        }
+        if let (Expr::List { items, span }, Type::List { elem, lo, hi }) = (e, expected) {
+            if let (Some(lo), Some(hi)) = (lo, hi) {
+                let n = items.len() as f64;
+                if n < *lo || n > *hi {
+                    self.diags.push(Diagnostic::type_error(
+                        format!(
+                            "list literal length {} is outside bounds {}",
+                            crate::value::fmt_num(n),
+                            expected.display()
+                        ),
+                        *span,
+                    ));
+                }
+            }
+            for it in items {
+                self.check_against(it, elem);
+            }
             return;
         }
         // Variant against an expected sum type.
@@ -732,7 +761,11 @@ impl Checker {
                         elem = t;
                     }
                 }
-                Type::List(Box::new(elem))
+                Type::List {
+                    elem: Box::new(elem),
+                    lo: None,
+                    hi: None,
+                }
             }
         }
     }
@@ -757,7 +790,7 @@ impl Checker {
                 // nearest(query: embedding@S, candidates: [embedding@S], k) -> [embedding@S]
                 if let [query, candidates, _k] = args {
                     let cand_elem = match candidates {
-                        Type::List(e) => (**e).clone(),
+                        Type::List { elem, .. } => (**elem).clone(),
                         _ => Type::Unknown,
                     };
                     self.require_same_space(query, &cand_elem, span);
@@ -768,16 +801,28 @@ impl Checker {
                             _ => None,
                         },
                     };
-                    return Some(Type::List(Box::new(match space {
-                        Some(s) => Type::Embedding(s),
-                        None => Type::Unknown,
-                    })));
+                    return Some(Type::List {
+                        elem: Box::new(match space {
+                            Some(s) => Type::Embedding(s),
+                            None => Type::Unknown,
+                        }),
+                        lo: None,
+                        hi: None,
+                    });
                 }
-                Some(Type::List(Box::new(Type::Unknown)))
+                Some(Type::List {
+                    elem: Box::new(Type::Unknown),
+                    lo: None,
+                    hi: None,
+                })
             }
             // Logical-clock and audit affordances for governed memory (v0.x).
             "advance" => Some(Type::Unit),
-            "audit_log" => Some(Type::List(Box::new(Type::Glyph))),
+            "audit_log" => Some(Type::List {
+                elem: Box::new(Type::Glyph),
+                lo: None,
+                hi: None,
+            }),
             "listen" => {
                 if args.len() != 1 {
                     self.diags.push(Diagnostic::type_error(
@@ -815,7 +860,11 @@ impl Checker {
             ));
         }
         match method {
-            "recent" | "nearest" => Type::List(Box::new(Type::Unknown)),
+            "recent" | "nearest" => Type::List {
+                elem: Box::new(Type::Unknown),
+                lo: None,
+                hi: None,
+            },
             _ => Type::Unit,
         }
     }

@@ -24,8 +24,12 @@ pub enum Type {
     /// are interchangeable only when their spaces match — this is the structural
     /// rejection of cross-space comparison (§5.3).
     Embedding(String),
-    /// A homogeneous list `[T]`.
-    List(Box<Type>),
+    /// A homogeneous list `[T]`, optionally length-bounded for host-side typing.
+    List {
+        elem: Box<Type>,
+        lo: Option<f64>,
+        hi: Option<f64>,
+    },
     /// The result of inference: carries an underlying type, plus (at runtime)
     /// confidence and provenance. Not assignable to the underlying type.
     Inferred(Box<Type>),
@@ -64,7 +68,18 @@ impl Type {
                 format!("one_of {{ {} }}", names.join(", "))
             }
             Type::Embedding(space) => format!("embedding@{}", space),
-            Type::List(elem) => format!("[{}]", elem.display()),
+            Type::List { elem, lo, hi } => {
+                if lo.is_some() && hi.is_some() {
+                    format!(
+                        "list of {}..{} of {}",
+                        lo.map(fmt_num).unwrap_or_else(|| "_".into()),
+                        hi.map(fmt_num).unwrap_or_else(|| "_".into()),
+                        elem.display()
+                    )
+                } else {
+                    format!("list of {}", elem.display())
+                }
+            }
             Type::Inferred(inner) => format!("Inferred<{}>", inner.display()),
             Type::Unit => "essence".to_string(),
             Type::Unknown => "essence".to_string(),
@@ -105,7 +120,7 @@ impl Type {
             (Inferred(a), Inferred(b)) => a.assignable_to(b),
             // Embeddings are interchangeable only within the same space.
             (Embedding(a), Embedding(b)) => a == b,
-            (List(a), List(b)) => a.assignable_to(b),
+            (List { elem: a, .. }, List { elem: b, .. }) => a.assignable_to(b),
             // The headline: Inferred<T> is NOT assignable to plain T.
             _ => false,
         }

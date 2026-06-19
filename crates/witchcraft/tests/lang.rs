@@ -332,6 +332,53 @@ divine t: Turn from (\"x\") using dm with confidence >= 0.5 fallback {
     check_source(src).expect("well-formed fallback record literal");
 }
 
+#[test]
+fn parses_list_type_declarations() {
+    use witchcraft::ast::{Item, TypeDecl, TypeExpr};
+    use witchcraft::parser::parse;
+    let prog = parse("type Tags = list of glyph").expect("unbounded list type");
+    match &prog.items[0] {
+        Item::Type(TypeDecl { ty, .. }) => match ty {
+            TypeExpr::List { lo, hi, .. } => {
+                assert!(lo.is_none() && hi.is_none());
+            }
+            other => panic!("expected list type, got {:?}", other),
+        },
+        other => panic!("expected type decl, got {:?}", other),
+    }
+    check_source("type Exits = list of 0..4 of one_of { North, South, East, West }")
+        .expect("bounded list type");
+}
+
+#[test]
+fn list_literal_length_bound_is_checked() {
+    let err = check_err(
+        "\
+type Names = list of 0..2 of glyph
+let xs: Names = [\"a\", \"b\", \"c\"]
+",
+    );
+    assert!(
+        err.contains("outside bounds"),
+        "expected length error: {err}"
+    );
+}
+
+#[test]
+fn list_type_in_divine_output_still_rejected() {
+    let err = check_err(
+        "\
+type Items = list of glyph
+oracle o = summon \"m\"
+divine x: Items from (\"t\") using o
+",
+    );
+    assert!(
+        err.contains("cannot be a `divine` output type"),
+        "list types remain forbidden as divine outputs for now: {err}"
+    );
+}
+
 // ---------- capabilities: surface syntax (compile-time only) ----------
 
 #[test]

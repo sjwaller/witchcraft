@@ -13,7 +13,9 @@ param          = ident [ ":" type ] ;
 capability     = ident [ "(" ident ")" ] ;
 
 type_decl      = "type" ident "=" type ;
-type           = record_type | sum_type | refined | named ;
+type           = record_type | sum_type | list_type | refined | named ;
+list_type      = "list" "of" [ bound "of" ] type ;
+bound          = number ".." number ;
 record_type    = "{" [ field { "," field } ] "}" ;
 field          = ident ":" type ;
 sum_type       = "one_of" "{" [ variant { "," variant } ] "}" ;

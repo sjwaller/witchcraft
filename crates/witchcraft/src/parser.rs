@@ -287,7 +287,39 @@ impl Parser {
             }
             TokenKind::Ident(base) => {
                 self.bump();
-                if self.eat(&TokenKind::In) {
+                if base == "list" {
+                    let (of_word, of_span) = self.expect_ident("`of` after `list`")?;
+                    if of_word != "of" {
+                        return Err(Diagnostic::parse("expected `of` after `list`", of_span));
+                    }
+                    if let TokenKind::Number(lo) = self.peek_kind().clone() {
+                        self.bump();
+                        self.expect(TokenKind::DotDot, "`..`")?;
+                        let hi = self.number("an upper bound")?;
+                        let (of2, of2_span) = self.expect_ident("`of` before the element type")?;
+                        if of2 != "of" {
+                            return Err(Diagnostic::parse(
+                                "expected `of` before the element type",
+                                of2_span,
+                            ));
+                        }
+                        let elem = self.type_expr()?;
+                        Ok(TypeExpr::List {
+                            elem: Box::new(elem),
+                            lo: Some(lo),
+                            hi: Some(hi),
+                            span,
+                        })
+                    } else {
+                        let elem = self.type_expr()?;
+                        Ok(TypeExpr::List {
+                            elem: Box::new(elem),
+                            lo: None,
+                            hi: None,
+                            span,
+                        })
+                    }
+                } else if self.eat(&TokenKind::In) {
                     let lo = self.number("a lower bound")?;
                     self.expect(TokenKind::DotDot, "`..`")?;
                     let hi = self.number("an upper bound")?;

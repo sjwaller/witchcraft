@@ -289,6 +289,21 @@ action that is one of Draft / Escalate / AskClarify." That's a precise,
 machine-checkable description of a triage decision — and it's about to become
 the thing a model is forced to fill in.
 
+### List types (host-side)
+
+Homogeneous lists are written in English order, not with bracket syntax in type
+positions:
+
+```witchcraft
+type Tags = list of glyph
+type Exits = list of 0..4 of one_of { North, South, East, West }
+```
+
+`list of T` names an unbounded host-side list whose elements have type `T`.
+`list of lo..hi of T` adds inclusive length bounds — required later when a list
+field appears in a `divine` output type. List **values** still use bracket
+literals: `[North, West]`.
+
 ---
 
 ## 4. Talking to a model
