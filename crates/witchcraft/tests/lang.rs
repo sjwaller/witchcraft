@@ -42,17 +42,17 @@ fn check_err(src: &str) -> String {
 #[test]
 fn host_arithmetic_and_control_flow() {
     let src = "\
-fn add(a, b) { a + b }
+define add(a, b) { a + b }
 var n = 0
-while n < 3 { print n n = n + 1 }
-print add(2, 3)
+while n < 3 { speak n n = n + 1 }
+speak add(2, 3)
 ";
     assert_eq!(run(src, RunConfig::default()), "0\n1\n2\n5\n");
 }
 
 #[test]
 fn glyph_interpolation() {
-    let src = "let who = \"witch\" print \"hi ${who}\"";
+    let src = "let who = \"witch\" speak \"hi ${who}\"";
     assert_eq!(run(src, RunConfig::default()), "hi witch\n");
 }
 
@@ -62,20 +62,20 @@ fn let_is_immutable_var_is_not() {
     let err = run_source(immutable, RunConfig::default()).unwrap_err();
     assert!(err[0].render().contains("cannot reassign"));
 
-    let mutable = "var x = 1 x = 2 print x";
+    let mutable = "var x = 1 x = 2 speak x";
     assert_eq!(run(mutable, RunConfig::default()), "2\n");
 }
 
 #[test]
 fn division_by_zero_is_a_runtime_error() {
-    let err = run_source("print 1 / 0", RunConfig::default()).unwrap_err();
+    let err = run_source("speak 1 / 0", RunConfig::default()).unwrap_err();
     assert!(err[0].render().contains("division by zero"));
 }
 
 #[test]
 fn functions_do_not_leak_caller_locals() {
     // `local` lives inside `g`; `f` must not see it through the call.
-    let src = "fn f() { local } fn g() { let local = 5 f() } print g()";
+    let src = "define f() { local } define g() { let local = 5 f() } speak g()";
     let err = run_source(src, RunConfig::default()).unwrap_err();
     assert!(err[0].render().contains("undefined name `local`"));
 }
@@ -94,7 +94,7 @@ fn same_seed_same_output() {
         "{ACTION_TYPES}
 oracle o = summon \"m\"
 divine d: Disposition from (\"t\") using o with confidence >= 0.0 fallback \"f\"
-print d.urgency
+speak d.urgency
 "
     );
     let a = run(
@@ -125,7 +125,7 @@ fn litmus_deleting_the_type_changes_the_computation() {
 type Rating = spark in 0..5
 oracle o = summon \"m\"
 divine r: Rating from (\"x\") using o with confidence >= 0.0 fallback 0
-print r
+speak r
 ";
     let typed = run(
         src,
@@ -162,14 +162,14 @@ fn low_confidence_value_never_reaches_enact() {
     let src = format!(
         "{ACTION_TYPES}
 oracle o = summon \"m\"
-print \"start\"
+speak \"start\"
 divine d: Disposition from (\"t\") using o with confidence >= 0.8 fallback \"fb\"
 enact d.action {{
-    Draft(reply) => {{ print \"drafted\" }}
-    Escalate => {{ print \"escalated\" }}
-    AskClarify(question) => {{ print \"asked\" }}
+    Draft(reply) => {{ speak \"drafted\" }}
+    Escalate => {{ speak \"escalated\" }}
+    AskClarify(question) => {{ speak \"asked\" }}
 }}
-print \"end\"
+speak \"end\"
 "
     );
 
@@ -258,6 +258,30 @@ enact d.action {{
     assert!(check_err(&src).contains("unknown variant"));
 }
 
+#[test]
+fn parses_listen_call() {
+    use witchcraft::ast::Expr;
+    use witchcraft::parser::parse;
+    let prog = parse("let x = listen(\"> \")").expect("listen parses");
+    match &prog.items[0] {
+        witchcraft::ast::Item::Stmt(witchcraft::ast::Stmt::Let { value, .. }) => match value {
+            Expr::Call { callee, args, .. } => {
+                assert_eq!(callee, "listen");
+                assert_eq!(args.len(), 1);
+            }
+            other => panic!("expected listen call, got {:?}", other),
+        },
+        other => panic!("expected let, got {:?}", other),
+    }
+}
+
+#[test]
+fn rejects_legacy_fn_and_print() {
+    use witchcraft::parser::parse;
+    assert!(parse("fn f() { }").is_err());
+    assert!(parse("print \"x\"").is_err());
+}
+
 // ---------- capabilities: surface syntax (compile-time only) ----------
 
 #[test]
@@ -265,7 +289,7 @@ fn parses_fn_requires_and_grant_region() {
     use witchcraft::ast::{Item, Stmt};
     use witchcraft::parser::parse;
     let src = "\
-fn escalate() requires permit(escalate) { print \"escalated\" }
+define escalate() requires permit(escalate) { speak \"escalated\" }
 with grant permit(escalate) {
     escalate()
 }
@@ -275,10 +299,10 @@ with grant permit(escalate) {
         .items
         .iter()
         .find_map(|i| match i {
-            Item::Fn(f) => Some(f),
+            Item::Define(f) => Some(f),
             _ => None,
         })
-        .expect("a fn item");
+        .expect("a define item");
     assert_eq!(f.requires.len(), 1);
     assert_eq!(f.requires[0].display(), "permit(escalate)");
     assert!(prog
@@ -294,7 +318,7 @@ fn parses_multiple_and_parameterised_capabilities() {
     use witchcraft::ast::Item;
     use witchcraft::parser::parse;
     let src = "\
-fn act() requires permit(escalate), scope(tenant) { print \"ok\" }
+define act() requires permit(escalate), scope(tenant) { speak \"ok\" }
 with grant permit(escalate), scope(tenant) {
     act()
 }
@@ -304,7 +328,7 @@ with grant permit(escalate), scope(tenant) {
         .items
         .iter()
         .find_map(|i| match i {
-            Item::Fn(f) => Some(f),
+            Item::Define(f) => Some(f),
             _ => None,
         })
         .unwrap();
@@ -317,9 +341,9 @@ with grant permit(escalate), scope(tenant) {
 fn capability_without_a_parameter_parses() {
     use witchcraft::ast::Item;
     use witchcraft::parser::parse;
-    let prog = parse("fn a() requires audit { }").expect("bare capability parses");
+    let prog = parse("define a() requires audit { }").expect("bare capability parses");
     let f = match &prog.items[0] {
-        Item::Fn(f) => f,
+        Item::Define(f) => f,
         _ => unreachable!(),
     };
     assert_eq!(f.requires[0].kind, "audit");
@@ -330,7 +354,7 @@ fn capability_without_a_parameter_parses() {
 fn malformed_capability_is_a_parse_error() {
     use witchcraft::parser::parse;
     // Unclosed capability parameter.
-    assert!(parse("fn a() requires permit( { }").is_err());
+    assert!(parse("define a() requires permit( { }").is_err());
     // A grant region with no capability named.
     assert!(parse("with grant { }").is_err());
 }
@@ -340,7 +364,7 @@ fn malformed_capability_is_a_parse_error() {
 #[test]
 fn missing_capability_is_a_compile_error() {
     let src = "\
-fn escalate() requires permit(escalate) { print \"e\" }
+define escalate() requires permit(escalate) { speak \"e\" }
 escalate()
 ";
     let err = check_err(src);
@@ -354,7 +378,7 @@ escalate()
 #[test]
 fn granted_capability_passes_the_check() {
     let src = "\
-fn escalate() requires permit(escalate) { print \"e\" }
+define escalate() requires permit(escalate) { speak \"e\" }
 with grant permit(escalate) { escalate() }
 ";
     assert!(
@@ -367,8 +391,8 @@ with grant permit(escalate) { escalate() }
 fn caller_without_capability_fails_transitively() {
     // `b` neither grants nor re-declares the capability `a` requires.
     let src = "\
-fn a() requires permit(escalate) { print \"a\" }
-fn b() { a() }
+define a() requires permit(escalate) { speak \"a\" }
+define b() { a() }
 with grant permit(escalate) { b() }
 ";
     assert!(check_err(src).contains("permit(escalate)"));
@@ -377,8 +401,8 @@ with grant permit(escalate) { b() }
 #[test]
 fn caller_that_redeclares_passes_transitively() {
     let src = "\
-fn a() requires permit(escalate) { print \"a\" }
-fn b() requires permit(escalate) { a() }
+define a() requires permit(escalate) { speak \"a\" }
+define b() requires permit(escalate) { a() }
 with grant permit(escalate) { b() }
 ";
     assert!(check_source(src).is_ok());
@@ -388,7 +412,7 @@ with grant permit(escalate) { b() }
 fn distinct_capability_parameters_are_distinct() {
     // Granting scope(tenant) does not satisfy a requirement for scope(user).
     let src = "\
-fn read_user() requires scope(user) { print \"u\" }
+define read_user() requires scope(user) { speak \"u\" }
 with grant scope(tenant) { read_user() }
 ";
     assert!(check_err(src).contains("scope(user)"));
@@ -398,7 +422,7 @@ with grant scope(tenant) { read_user() }
 fn grant_does_not_leak_past_its_region() {
     // The call inside the region is fine; the one after it is not.
     let src = "\
-fn escalate() requires permit(escalate) { print \"e\" }
+define escalate() requires permit(escalate) { speak \"e\" }
 with grant permit(escalate) { escalate() }
 escalate()
 ";

@@ -45,7 +45,7 @@ pub fn lower_program_weaken(
     // User functions.
     for item in &prog.items {
         match item {
-            Item::Fn(f) => {
+            Item::Define(f) => {
                 let func = ctx.lower_function(&f.name, &f.params, &f.body)?;
                 ctx.functions.push(func);
             }
@@ -124,7 +124,7 @@ fn collect_oracles(prog: &Program, ctx: &mut LowerCtx) {
     for item in &prog.items {
         match item {
             Item::Stmt(s) => walk(std::slice::from_ref(s), ctx),
-            Item::Fn(f) => walk(&f.body, ctx),
+            Item::Define(f) => walk(&f.body, ctx),
             Item::Familiar(fam) => walk(&fam.body, ctx),
             Item::Type(_) => {}
         }
@@ -162,7 +162,7 @@ fn collect_memories(prog: &Program, ctx: &mut LowerCtx) {
     for item in &prog.items {
         match item {
             Item::Stmt(s) => walk(std::slice::from_ref(s), ctx),
-            Item::Fn(f) => walk(&f.body, ctx),
+            Item::Define(f) => walk(&f.body, ctx),
             Item::Familiar(fam) => walk(&fam.body, ctx),
             Item::Type(_) => {}
         }
@@ -248,9 +248,9 @@ impl LowerCtx {
                 fb.emit(Instr::StoreLocal { local: l, src: op });
                 fb.clear_last_value();
             }
-            Stmt::Print { value, .. } => {
+            Stmt::Speak { value, .. } => {
                 let op = self.lower_expr(fb, value)?;
-                fb.emit(Instr::Print { val: op });
+                fb.emit(Instr::Speak { val: op });
                 fb.clear_last_value();
             }
             Stmt::Summon { .. } => {
@@ -620,6 +620,12 @@ impl LowerCtx {
         _span: Span,
     ) -> Result<Operand, Diagnostic> {
         match callee {
+            "listen" => {
+                let prompt = self.lower_expr(fb, &args[0])?;
+                let dst = fb.fresh_tmp();
+                fb.emit(Instr::Listen { dst, prompt });
+                Ok(Operand::Tmp(dst))
+            }
             "similarity" => {
                 let lhs = self.lower_expr(fb, &args[0])?;
                 let rhs = self.lower_expr(fb, &args[1])?;

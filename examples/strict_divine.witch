@@ -23,5 +23,5 @@ with grant permit(network) {
         with confidence >= 0.5
         fallback "low confidence"
 
-    print "should never run: ${decision.urgency}"
+    speak "should never run: ${decision.urgency}"
 }

@@ -49,7 +49,7 @@ fn check_fails_on_ungranted_capability() {
     let path = std::env::temp_dir().join(format!("witch_cap_{}.witch", std::process::id()));
     std::fs::write(
         &path,
-        "fn escalate() requires permit(escalate) { print \"e\" }\nescalate()\n",
+        "define escalate() requires permit(escalate) { speak \"e\" }\nescalate()\n",
     )
     .expect("write temp program");
     let out = witch().arg("check").arg(&path).output().expect("run witch");

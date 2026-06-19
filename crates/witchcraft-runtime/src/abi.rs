@@ -57,11 +57,29 @@ pub extern "C" fn w_concat2(a: Value, b: Value) -> Value {
     value::concat(&[a, b])
 }
 
-/// Print a value followed by a newline (the compiled `print`), through the
+/// Speak a value followed by a newline (the compiled `speak`), through the
 /// runtime sink (stdout, or the capture buffer when active).
 #[no_mangle]
-pub extern "C" fn w_print(v: Value) {
+pub extern "C" fn w_speak(v: Value) {
     crate::sink::emit_line(&value::display(v));
+}
+
+/// Blocking read of one stdin line; returns a glyph (trailing newline stripped).
+/// The prompt value is accepted for API symmetry but is not written to stdout.
+#[no_mangle]
+pub extern "C" fn w_listen(prompt: Value) -> Value {
+    release(prompt);
+    let mut line = String::new();
+    if std::io::stdin().read_line(&mut line).is_err() {
+        return value::glyph("");
+    }
+    if line.ends_with('\n') {
+        line.pop();
+        if line.ends_with('\r') {
+            line.pop();
+        }
+    }
+    value::glyph(&line)
 }
 
 /// Structural equality of two values (the compiled `==`).

@@ -18,7 +18,7 @@ divine r: Reading
   with confidence >= 0.0
   fallback { feeling: Neutral, urgency: 0 }
 
-print "feeling: ${r.feeling}, urgency: ${r.urgency}/10"
+speak "feeling: ${r.feeling}, urgency: ${r.urgency}/10"
 ```
 
 `urgency` can only come back as a number 0–10; `feeling` can only be one of those five — enforced *during* generation. The model named `MoodReader` is resolved from a manifest at run time.
@@ -106,8 +106,8 @@ divine r: Reading
   with confidence >= 0.0
   fallback { feeling: Neutral, urgency: 0 }
 
-print "feeling: ${r.feeling}"
-print "urgency: ${r.urgency}/10"
+speak "feeling: ${r.feeling}"
+speak "urgency: ${r.urgency}/10"
 ```
 
 **Check it** (static checks only — never runs the program):
@@ -262,11 +262,18 @@ A quick reference to the constructs. See `examples/` for working programs.
 **Host language** — ordinary, unsurprising, deliberately *not* themed:
 
 ```witchcraft
-fn add(a, b) { a + b }
+define add(a, b) { a + b }
 let name = "world"
 var n = 0
-while n < 3 { print "hi ${name} ${n}"  n = n + 1 }
-if n == 3 { print "done" } else { print "?" }
+while n < 3 { speak "hi ${name} ${n}"  n = n + 1 }
+if n == 3 { speak "done" } else { speak "?" }
+```
+
+**Human boundary** — stdin/stdout to the responsibility-holder:
+
+```witchcraft
+speak "> "
+let line = listen("")
 ```
 
 **`oracle`** — declare an inference need (named, never a model):
@@ -298,9 +305,9 @@ The result is `Inferred<Disposition>` until the `with confidence` gate discharge
 
 ```witchcraft
 enact d.action {
-  Draft(reply)         => { print "drafted: ${reply}" }
-  Escalate             => { print "escalated" }
-  AskClarify(question) => { print "asked: ${question}" }
+  Draft(reply)         => { speak "drafted: ${reply}" }
+  Escalate             => { speak "escalated" }
+  AskClarify(question) => { speak "asked: ${question}" }
 }
 ```
 
@@ -362,6 +369,19 @@ cargo test -p witchcraft --features llama        # real-model tests (needs a GGU
 
 The real-model tests skip themselves unless you point them at a model, e.g.
 `WITCHCRAFT_GGUF=./models/<model>.gguf cargo test -p witchcraft --features llama -- --nocapture`.
+
+---
+
+## Breaking changes (keyword rename)
+
+| Old | New | Register |
+|-----|-----|----------|
+| `fn` | `define` | plain |
+| `print` | `speak` | human boundary (stdout) |
+| — | `listen(prompt)` | human boundary (stdin) |
+
+There are no deprecation aliases — update source, examples, and docs mechanically.
+See [docs/LANGUAGE_GUIDE.md](docs/LANGUAGE_GUIDE.md) for the naming stopping rule.
 
 ---
 

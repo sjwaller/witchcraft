@@ -29,7 +29,7 @@ fn embed_yields_the_oracles_space() {
     let src = "\
 oracle triage = summon \"support-reasoner-v3\"
 let e = triage.embed(\"payment failed\")
-print e
+speak e
 ";
     assert_eq!(run(src), "<embedding@support-reasoner-v3>\n");
 }
@@ -43,7 +43,7 @@ oracle m = summon \"space-A\"
 let p1 = m.embed(\"payment failed\")
 let p2 = m.embed(\"payment failed\")
 let q = m.embed(\"the weather is nice today\")
-print similarity(p1, p2) >= similarity(p1, q)
+speak similarity(p1, p2) >= similarity(p1, q)
 ";
     assert_eq!(run(src), "true\n");
     // Deterministic across runs.
@@ -58,7 +58,7 @@ let q = m.embed(\"payment failed\")
 let c1 = m.embed(\"payment failed\")
 let c2 = m.embed(\"unrelated topic entirely\")
 let c3 = m.embed(\"another different subject\")
-print nearest(q, [c1, c2, c3], 2)
+speak nearest(q, [c1, c2, c3], 2)
 ";
     let out = run(src);
     // Two results, both in the same space.
@@ -73,7 +73,7 @@ oracle a = summon \"space-A\"
 oracle b = summon \"space-B\"
 let ea = a.embed(\"x\")
 let eb = b.embed(\"y\")
-print similarity(ea, eb)
+speak similarity(ea, eb)
 ";
     let err = check_err(src);
     assert!(err.contains("space-A"), "names space A: {err}");
@@ -87,7 +87,7 @@ oracle a = summon \"space-A\"
 oracle b = summon \"space-B\"
 let q = a.embed(\"x\")
 let c = b.embed(\"y\")
-print nearest(q, [c], 1)
+speak nearest(q, [c], 1)
 ";
     let err = check_err(src);
     assert!(err.contains("space-A") && err.contains("space-B"), "{err}");
@@ -102,7 +102,7 @@ oracle b = summon \"B\"
 let ea = a.embed(\"x\")
 let eb = b.embed(\"y\")
 let same = similarity(ea, eb)
-print same
+speak same
 ";
     assert!(check_source(src).is_err());
 }

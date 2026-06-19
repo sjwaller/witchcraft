@@ -1,20 +1,20 @@
 # Mundane host language: plain keywords, no occult vocabulary needed here (§7).
 
-fn add(a, b) {
+define add(a, b) {
     a + b
 }
 
 let name = "witch"
-print "Greetings, ${name}!"
+speak "Greetings, ${name}!"
 
 var n = 0
 while n < 3 {
-    print "n = ${n}"
+    speak "n = ${n}"
     n = n + 1
 }
 
 if add(2, 3) == 5 {
-    print "arithmetic holds"
+    speak "arithmetic holds"
 } else {
-    print "the universe is broken"
+    speak "the universe is broken"
 }

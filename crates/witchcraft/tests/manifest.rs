@@ -77,7 +77,7 @@ type Action = one_of { Draft(reply: glyph), Escalate }
 type Disposition = { urgency: spark in 0..10, action: Action }
 oracle triage = summon \"TriageReasoner\"
 divine d: Disposition from (\"angry customer\") using triage with confidence >= 0.0 fallback \"low confidence\"
-print d.urgency
+speak d.urgency
 ";
     let cfg = RunConfig {
         seed: 3,
@@ -134,7 +134,7 @@ type Action = one_of { Draft(reply: glyph), Escalate }
 type Disposition = { urgency: spark in 0..10, action: Action }
 oracle cloud = summon \"CloudReasoner\"
 divine d: Disposition from (\"angry customer\") using cloud with confidence >= 0.0 fallback \"low confidence\"
-print d.urgency
+speak d.urgency
 ";
     let cfg = RunConfig {
         seed: 3,

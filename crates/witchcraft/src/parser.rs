@@ -97,8 +97,9 @@ impl Parser {
     }
 
     fn item(&mut self) -> Result<Item, Diagnostic> {
+        self.reject_legacy_keyword()?;
         match self.peek_kind() {
-            TokenKind::Fn => Ok(Item::Fn(self.fn_decl()?)),
+            TokenKind::Define => Ok(Item::Define(self.define_decl()?)),
             TokenKind::Type => Ok(Item::Type(self.type_decl()?)),
             TokenKind::Familiar => Ok(Item::Familiar(self.familiar_decl()?)),
             _ => Ok(Item::Stmt(self.stmt()?)),
@@ -160,9 +161,9 @@ impl Parser {
         Ok(Capability { kind, param, span })
     }
 
-    fn fn_decl(&mut self) -> Result<FnDecl, Diagnostic> {
+    fn define_decl(&mut self) -> Result<DefineDecl, Diagnostic> {
         let span = self.span();
-        self.expect(TokenKind::Fn, "`fn`")?;
+        self.expect(TokenKind::Define, "`define`")?;
         let (name, _) = self.expect_ident("a function name")?;
         self.expect(TokenKind::LParen, "`(`")?;
         let mut params = Vec::new();
@@ -194,7 +195,7 @@ impl Parser {
             Vec::new()
         };
         let body = self.block()?;
-        Ok(FnDecl {
+        Ok(DefineDecl {
             name,
             params,
             ret,
@@ -333,6 +334,7 @@ impl Parser {
     // ---- statements ----
 
     fn stmt(&mut self) -> Result<Stmt, Diagnostic> {
+        self.reject_legacy_keyword()?;
         let span = self.span();
         match self.peek_kind().clone() {
             TokenKind::Let => {
@@ -377,10 +379,10 @@ impl Parser {
                 let model = self.string_literal_simple("a model id")?;
                 Ok(Stmt::Summon { name, model, span })
             }
-            TokenKind::Print => {
+            TokenKind::Speak => {
                 self.bump();
                 let value = self.expr()?;
-                Ok(Stmt::Print { value, span })
+                Ok(Stmt::Speak { value, span })
             }
             TokenKind::While => {
                 self.bump();
@@ -826,6 +828,15 @@ impl Parser {
                 self.expect(TokenKind::RBracket, "`]` to close the list")?;
                 Ok(Expr::List { items, span })
             }
+            TokenKind::Listen => {
+                self.bump();
+                let args = self.call_args()?;
+                Ok(Expr::Call {
+                    callee: "listen".to_string(),
+                    args,
+                    span,
+                })
+            }
             TokenKind::Ident(name) => {
                 self.bump();
                 let is_variant = name.chars().next().is_some_and(|c| c.is_uppercase());
@@ -856,6 +867,20 @@ impl Parser {
                 span,
             )),
         }
+    }
+
+    fn reject_legacy_keyword(&mut self) -> Result<(), Diagnostic> {
+        if let TokenKind::Ident(name) = self.peek_kind().clone() {
+            let msg = match name.as_str() {
+                "fn" => Some("`fn` was renamed to `define`"),
+                "print" => Some("`print` was renamed to `speak`"),
+                _ => None,
+            };
+            if let Some(m) = msg {
+                return Err(Diagnostic::parse(m.to_string(), self.span()));
+            }
+        }
+        Ok(())
     }
 
     fn variant_fields(&mut self) -> Result<Vec<(String, Expr)>, Diagnostic> {

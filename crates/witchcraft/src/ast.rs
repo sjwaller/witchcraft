@@ -9,7 +9,7 @@ pub struct Program {
 
 #[derive(Clone, Debug)]
 pub enum Item {
-    Fn(FnDecl),
+    Define(DefineDecl),
     Type(TypeDecl),
     Familiar(FamiliarDecl),
     Stmt(Stmt),
@@ -28,7 +28,7 @@ pub struct FamiliarDecl {
 }
 
 #[derive(Clone, Debug)]
-pub struct FnDecl {
+pub struct DefineDecl {
     pub name: String,
     pub params: Vec<Param>,
     pub ret: Option<TypeExpr>,
@@ -133,7 +133,7 @@ pub enum Stmt {
         value: Expr,
         span: Span,
     },
-    Print {
+    Speak {
         value: Expr,
         span: Span,
     },

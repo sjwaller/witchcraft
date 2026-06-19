@@ -60,8 +60,27 @@ reproducible, without needing a real model installed. To use a real model, see
 ## 2. The ordinary language
 
 Witchcraft's everyday syntax is deliberately plain. The unusual vocabulary
-(`oracle`, `divine`, `familiar`) is reserved for the genuinely new ideas; loops
-and variables look like loops and variables.
+(`oracle`, `divine`, `familiar`, `speak`, `listen`) is reserved for the
+intelligence seam and the human boundary; loops and variables look like loops
+and variables.
+
+#### Naming: two registers, one stopping rule
+
+| Register | Examples | Rule |
+|----------|----------|------|
+| **Plain** | `define`, `let`, `var`, `while`, `if` | Universal computation — never themed |
+| **Evocative** | `oracle`, `summon`, `divine`, `enact`, `speak`, `listen` | Intelligence or human-boundary seam only |
+
+**Stopping rule:** abbreviations become plain words (`fn` → `define`); plain
+computation keywords stay as-is; evocative names are reserved for the seam.
+
+#### Not object-oriented
+
+Data is plain typed values; behaviour lives in `define` functions; encapsulation
+is capabilities (`scope`, `permits`, `requires`). There are no classes and no
+inheritance. If polymorphism is ever needed, the future answer is
+traits/abilities — never OO inheritance. You grammar-constrain **values**, not
+behaviour or objects.
 
 ### Values and variables
 
@@ -98,16 +117,16 @@ sections.
 ### Functions
 
 ```witchcraft
-fn add(a, b) {
+define add(a, b) {
     a + b              # the last expression is the return value
 }
 
-fn greet(who: glyph) : glyph {   # parameter and return types are optional
+define greet(who: glyph) : glyph {   # parameter and return types are optional
     "hello ${who}"
 }
 
-print add(2, 3)        # 5
-print greet("world")   # hello world
+speak add(2, 3)        # 5
+speak greet("world")   # hello world
 ```
 
 You can annotate parameters and the return type (`who: glyph`, `: glyph`), or
@@ -118,14 +137,14 @@ leave them off and let the language infer them.
 ```witchcraft
 var n = 0
 while n < 3 {
-    print "n = ${n}"
+    speak "n = ${n}"
     n = n + 1
 }
 
 if n == 3 {
-    print "counted to three"
+    speak "counted to three"
 } else {
-    print "something is off"
+    speak "something is off"
 }
 ```
 
@@ -134,7 +153,7 @@ The comparison operators are `< <= > >= == !=`, and boolean logic uses the words
 
 ```witchcraft
 if n > 0 and not (n == 5) {
-    print "positive and not five"
+    speak "positive and not five"
 }
 ```
 
@@ -144,7 +163,7 @@ Text goes in double quotes. Insert any expression with `${...}`:
 
 ```witchcraft
 let who = "witch"
-print "hi ${who}, ${1 + 1} times"     # hi witch, 2 times
+speak "hi ${who}, ${1 + 1} times"     # hi witch, 2 times
 ```
 
 ### Lists
@@ -161,6 +180,20 @@ let lines = [
 
 Lists are handy for feeding a batch of inputs through inference (loop over the
 list, `divine` each one).
+
+### Human boundary: `speak` and `listen`
+
+`speak` writes to the human on stdout (value display + newline). `listen(prompt)`
+reads one line from stdin (blocking; trailing newline stripped). The prompt
+argument is for your composition — it is **not** written automatically; speak the
+prompt first if the user should see it:
+
+```witchcraft
+speak "> "
+let action = listen("")
+```
+
+These are evocative names at the human boundary, not generic file I/O.
 
 ---
 
@@ -340,13 +373,13 @@ doesn't exist, and it's a compile error.
 ```witchcraft
 enact decision.action {
     Draft(reply) => {
-        print "drafted reply: ${reply}"
+        speak "drafted reply: ${reply}"
     }
     Escalate => {
-        print "escalated to a human"
+        speak "escalated to a human"
     }
     AskClarify(question) => {
-        print "asked: ${question}"
+        speak "asked: ${question}"
     }
 }
 ```
@@ -384,7 +417,7 @@ inside a matching `within` block, which grants the scope:
 within tenant {
     tickets.write(message)        # allowed: we're inside the tenant scope
     let history = tickets.recent(5)
-    print "recalled ${history}"
+    speak "recalled ${history}"
 }
 ```
 
@@ -451,8 +484,8 @@ operation needs and some region grants.
 
 - A function can declare it `requires` a capability:
   ```witchcraft
-  fn escalate() requires escalate {
-      print "escalating"
+  define escalate() requires escalate {
+      speak "escalating"
   }
   ```
 - A `familiar` grants its body the capabilities in its `permits` list.
@@ -494,8 +527,8 @@ oracle triage = summon "TriageReasoner"
 
 memory tickets { scope tenant, retention 24 months, retrieval recency, audit required }
 
-fn escalate() requires escalate {
-    print "escalated (fallback): low confidence"
+define escalate() requires escalate {
+    speak "escalated (fallback): low confidence"
 }
 
 familiar support_triage(msg) permits { invoke triage, escalate } {
@@ -506,7 +539,7 @@ familiar support_triage(msg) permits { invoke triage, escalate } {
     within tenant {
         tickets.write(msg)
         let history = tickets.recent(5)
-        print "recalled scoped history"
+        speak "recalled scoped history"
     }
 
     # Inference IS the computation: produce a typed Disposition. If the model
@@ -517,13 +550,13 @@ familiar support_triage(msg) permits { invoke triage, escalate } {
         with confidence >= 0.5
         fallback escalate()
 
-    print "urgency: ${decision.urgency}"
+    speak "urgency: ${decision.urgency}"
 
     # Act on exactly the declared actions.
     enact decision.action {
-        Draft(reply)         => { print "drafted reply: ${reply}" }
-        Escalate             => { print "escalated to a human" }
-        AskClarify(question) => { print "asked: ${question}" }
+        Draft(reply)         => { speak "drafted reply: ${reply}" }
+        Escalate             => { speak "escalated to a human" }
+        AskClarify(question) => { speak "asked: ${question}" }
     }
 }
 
@@ -582,10 +615,11 @@ refuse it unless the source carries an explicit downgrade.
 # --- ordinary ---
 let x = 1                  # immutable binding
 var y = 2                  # mutable binding
-fn f(a, b) { a + b }       # function; last expression returns
+define f(a, b) { a + b }       # function; last expression returns
 while cond { ... }         # loop
 if cond { ... } else { ... }
-print "text ${expr}"       # print with interpolation
+speak "text ${expr}"       # speak to stdout (human boundary)
+listen("> ")               # read one stdin line (human boundary)
 [ a, b, c ]                # list literal
 
 # --- value types ---
@@ -618,7 +652,7 @@ let hits = m.nearest(e, k: 5)
 
 # --- agents & capabilities ---
 familiar a(arg) permits { invoke o, escalate } { ... }   # bounded, single-pass
-fn g() requires escalate { ... }                          # needs a capability
+define g() requires escalate { ... }                          # needs a capability
 with grant permit(network) { ... }                        # grants a capability
 ```
 

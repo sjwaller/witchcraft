@@ -131,7 +131,7 @@ impl Checker {
         // Pass 1b: record every function's required-capability set (part of its
         // checked signature) so calls are checked transitively, order-free.
         for item in &prog.items {
-            if let Item::Fn(f) = item {
+            if let Item::Define(f) = item {
                 self.fn_requires.insert(f.name.clone(), f.requires.clone());
             }
         }
@@ -140,7 +140,7 @@ impl Checker {
         for item in &prog.items {
             match item {
                 Item::Stmt(s) => self.collect_resources(std::slice::from_ref(s)),
-                Item::Fn(f) => self.collect_resources(&f.body),
+                Item::Define(f) => self.collect_resources(&f.body),
                 Item::Familiar(fam) => self.collect_resources(&fam.body),
                 Item::Type(_) => {}
             }
@@ -148,7 +148,7 @@ impl Checker {
         // Pass 2: check fns, familiars, and top-level statements.
         for item in &prog.items {
             match item {
-                Item::Fn(f) => self.check_fn(f),
+                Item::Define(f) => self.check_fn(f),
                 Item::Familiar(fam) => self.check_familiar(fam),
                 Item::Stmt(s) => self.check_stmt(s),
                 Item::Type(_) => {}
@@ -231,7 +231,7 @@ impl Checker {
         None
     }
 
-    fn check_fn(&mut self, f: &FnDecl) {
+    fn check_fn(&mut self, f: &DefineDecl) {
         self.push();
         for p in &f.params {
             let t = match &p.ty {
@@ -357,7 +357,7 @@ impl Checker {
             Stmt::Assign { value, .. } => {
                 let _ = self.infer(value);
             }
-            Stmt::Print { value, .. } => {
+            Stmt::Speak { value, .. } => {
                 let _ = self.infer(value);
             }
             Stmt::While { cond, body, .. } => {
@@ -735,6 +735,15 @@ impl Checker {
             // Logical-clock and audit affordances for governed memory (v0.x).
             "advance" => Some(Type::Unit),
             "audit_log" => Some(Type::List(Box::new(Type::Glyph))),
+            "listen" => {
+                if args.len() != 1 {
+                    self.diags.push(Diagnostic::type_error(
+                        "`listen` takes one glyph prompt argument".to_string(),
+                        span,
+                    ));
+                }
+                Some(Type::Glyph)
+            }
             _ => None,
         }
     }

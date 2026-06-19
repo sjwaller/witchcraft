@@ -4,7 +4,7 @@
 program        = { item } ;
 item           = fn_decl | type_decl | familiar_decl | statement ;
 
-fn_decl        = "fn" ident "(" [ param { "," param } ] ")" [ ":" type ]
+fn_decl        = "define" ident "(" [ param { "," param } ] ")" [ ":" type ]
                  [ "requires" capability { "," capability } ] block ;
 param          = ident [ ":" type ] ;
 
@@ -23,7 +23,7 @@ named          = ident ;                                (* spark | glyph | bool 
 
 block          = "{" { statement } "}" ;
 
-statement      = let_stmt | var_stmt | assign | print_stmt
+statement      = let_stmt | var_stmt | assign | speak_stmt
                | while_stmt | if_stmt | return_stmt
                | summon_stmt | divine_stmt | enact_stmt | grant_stmt
                | memory_decl | within_stmt | expr ;
@@ -31,7 +31,7 @@ statement      = let_stmt | var_stmt | assign | print_stmt
 let_stmt       = "let" ident [ ":" type ] "=" expr ;
 var_stmt       = "var" ident [ ":" type ] "=" expr ;
 assign         = ident "=" expr ;
-print_stmt     = "print" expr ;
+speak_stmt     = "speak" expr ;
 while_stmt     = "while" expr block ;
 if_stmt        = "if" expr block [ "else" block ] ;
 return_stmt    = "return" [ expr ] ;
@@ -74,9 +74,10 @@ mul_expr       = unary { ( "*" | "/" ) unary } ;
 unary          = ( "not" | "-" ) unary | postfix ;
 postfix        = primary { "." ident [ "(" [ expr { "," expr } ] ")" ] } ;
 primary        = number | "true" | "false" | glyph_literal
+               | "listen" "(" expr ")"
                | "(" expr ")"
                | list
-               | ident [ "(" [ expr { "," expr } ] ")" ]    (* call / builtin (similarity, nearest) *)
+               | ident [ "(" [ expr { "," expr } ] ")" ]    (* call / builtin (similarity, nearest, listen) *)
                | Ident [ "(" [ field_init { "," field_init } ] ")" ] ; (* variant ctor *)
 field_init     = ident [ ":" expr ] ;
 list           = "[" [ expr { "," expr } ] "]" ;       (* homogeneous list literal *)

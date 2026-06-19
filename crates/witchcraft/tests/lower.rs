@@ -45,7 +45,7 @@ fn terminators(f: &Function) -> Vec<&Terminator> {
 
 #[test]
 fn host_function_has_params_and_returns_last_expression() {
-    let p = lower("fn add(a, b) { a + b }");
+    let p = lower("define add(a, b) { a + b }");
     let add = func(&p, "add");
     assert_eq!(add.params.len(), 2, "two declared parameters");
     assert!(
@@ -68,13 +68,13 @@ fn host_function_has_params_and_returns_last_expression() {
 
 #[test]
 fn top_level_statements_become_main() {
-    let p = lower("fn add(a, b) { a + b }\nprint add(2, 3)");
+    let p = lower("define add(a, b) { a + b }\nspeak add(2, 3)");
     let main = func(&p, "main");
     assert!(
         all_instrs(main)
             .iter()
-            .any(|i| matches!(i, Instr::Print { .. })),
-        "the top-level print lives in main"
+            .any(|i| matches!(i, Instr::Speak { .. })),
+        "the top-level speak lives in main"
     );
     assert!(
         all_instrs(main)
@@ -86,7 +86,7 @@ fn top_level_statements_become_main() {
 
 #[test]
 fn while_loop_lowers_to_branching_blocks() {
-    let p = lower("var n = 0\nwhile n < 3 { print n n = n + 1 }");
+    let p = lower("var n = 0\nwhile n < 3 { speak n n = n + 1 }");
     let main = func(&p, "main");
     assert!(
         main.blocks.len() >= 4,
@@ -107,7 +107,7 @@ fn divine_with_threshold_emits_decode_grammar_and_discharge_branch() {
         "{ACTION_TYPES}
 oracle o = summon \"m\"
 divine d: Disposition from (\"t\") using o with confidence >= 0.8 fallback \"fb\"
-print d.urgency
+speak d.urgency
 "
     );
     let p = lower(&src);
@@ -147,7 +147,7 @@ fn undischarged_divine_emits_make_inferred_and_no_branch() {
         "{ACTION_TYPES}
 oracle o = summon \"m\"
 divine d: Disposition from (\"t\") using o
-print \"ok\"
+speak \"ok\"
 "
     );
     let p = lower(&src);
@@ -177,9 +177,9 @@ fn enact_lowers_to_a_tag_switch_and_interns_variants() {
 oracle o = summon \"m\"
 divine d: Disposition from (\"t\") using o with confidence >= 0.0 fallback \"fb\"
 enact d.action {{
-    Draft(reply) => {{ print \"drafted\" }}
-    Escalate => {{ print \"escalated\" }}
-    AskClarify(question) => {{ print \"asked\" }}
+    Draft(reply) => {{ speak \"drafted\" }}
+    Escalate => {{ speak \"escalated\" }}
+    AskClarify(question) => {{ speak \"asked\" }}
 }}
 "
     );
@@ -212,7 +212,7 @@ enact d.action {{
 #[test]
 fn logical_and_short_circuits_through_blocks() {
     // `false and <rhs>` must not evaluate the rhs; lowering proves this with a branch.
-    let p = lower("var hit = false\nlet x = false and (hit == false)\nprint x");
+    let p = lower("var hit = false\nlet x = false and (hit == false)\nspeak x");
     let main = func(&p, "main");
     assert!(
         terminators(main)

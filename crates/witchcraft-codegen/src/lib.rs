@@ -52,7 +52,8 @@ struct Runtime {
     glyph: FuncId,
     render: FuncId,
     concat2: FuncId,
-    print: FuncId,
+    speak: FuncId,
+    listen: FuncId,
     retain: FuncId,
     release: FuncId,
     equals: FuncId,
@@ -266,7 +267,8 @@ fn register_runtime_symbols(builder: &mut JITBuilder) {
     builder.symbol("w_glyph", w_glyph as *const u8);
     builder.symbol("w_render", w_render as *const u8);
     builder.symbol("w_concat2", w_concat2 as *const u8);
-    builder.symbol("w_print", w_print as *const u8);
+    builder.symbol("w_speak", w_speak as *const u8);
+    builder.symbol("w_listen", w_listen as *const u8);
     builder.symbol("w_retain", w_retain as *const u8);
     builder.symbol("w_release", w_release as *const u8);
     builder.symbol("w_equals", w_equals as *const u8);
@@ -497,7 +499,8 @@ fn declare_runtime<M: Module>(module: &mut M) -> Result<Runtime, String> {
     let glyph = import("w_glyph", vec![i64p(), i64p()], value())?;
     let render = import("w_render", value(), value())?;
     let concat2 = import("w_concat2", vec![i64p(), i64p(), i64p(), i64p()], value())?;
-    let print = import("w_print", value(), vec![])?;
+    let speak = import("w_speak", value(), vec![])?;
+    let listen = import("w_listen", value(), value())?;
     let retain = import("w_retain", value(), vec![])?;
     let release = import("w_release", value(), vec![])?;
     let equals = import(
@@ -603,7 +606,8 @@ fn declare_runtime<M: Module>(module: &mut M) -> Result<Runtime, String> {
         glyph,
         render,
         concat2,
-        print,
+        speak,
+        listen,
         retain,
         release,
         equals,
@@ -686,7 +690,8 @@ fn gen_function<M: Module>(
             glyph: module.declare_func_in_func(rt.glyph, b.func),
             render: module.declare_func_in_func(rt.render, b.func),
             concat2: module.declare_func_in_func(rt.concat2, b.func),
-            print: module.declare_func_in_func(rt.print, b.func),
+            speak: module.declare_func_in_func(rt.speak, b.func),
+            listen: module.declare_func_in_func(rt.listen, b.func),
             retain: module.declare_func_in_func(rt.retain, b.func),
             release: module.declare_func_in_func(rt.release, b.func),
             equals: module.declare_func_in_func(rt.equals, b.func),
@@ -756,7 +761,8 @@ struct Refs {
     glyph: cranelift_codegen::ir::FuncRef,
     render: cranelift_codegen::ir::FuncRef,
     concat2: cranelift_codegen::ir::FuncRef,
-    print: cranelift_codegen::ir::FuncRef,
+    speak: cranelift_codegen::ir::FuncRef,
+    listen: cranelift_codegen::ir::FuncRef,
     retain: cranelift_codegen::ir::FuncRef,
     release: cranelift_codegen::ir::FuncRef,
     equals: cranelift_codegen::ir::FuncRef,
@@ -931,10 +937,16 @@ impl<M: Module> Gen<'_, '_, M> {
                 let v = self.call_value(fref, &flat);
                 self.tmps.insert(*dst, v);
             }
-            Instr::Print { val } => {
+            Instr::Speak { val } => {
                 let (tag, bits) = self.operand(val);
-                self.b.ins().call(self.refs.print, &[tag, bits]);
+                self.b.ins().call(self.refs.speak, &[tag, bits]);
                 self.release_operand(val);
+            }
+            Instr::Listen { dst, prompt } => {
+                let (ptag, pbits) = self.operand(prompt);
+                let v = self.call_value(self.refs.listen, &[ptag, pbits]);
+                self.release_operand(prompt);
+                self.tmps.insert(*dst, v);
             }
             Instr::Field { dst, recv, field } => {
                 let (rtag, rbits) = self.operand(recv);

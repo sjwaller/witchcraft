@@ -44,7 +44,7 @@ fn in_scope_access_is_granted() {
 memory tickets { scope tenant }
 within tenant {
     tickets.write(\"a\")
-    print tickets.recent(1)
+    speak tickets.recent(1)
 }
 ";
     assert_eq!(run(src), "[a]\n");
@@ -66,7 +66,7 @@ fn scope_grant_does_not_leak_past_within() {
     let src = "\
 memory tickets { scope tenant }
 within tenant { tickets.write(\"a\") }
-print tickets.recent(1)
+speak tickets.recent(1)
 ";
     assert!(check_err(src).contains("tickets"));
 }
@@ -78,7 +78,7 @@ memory tickets { scope tenant, retention 100 }
 within tenant {
     tickets.write(\"first\")
     tickets.write(\"second\")
-    print tickets.recent(2)
+    speak tickets.recent(2)
 }
 ";
     assert_eq!(run(src), "[second, first]\n");
@@ -92,7 +92,7 @@ within tenant {
     tickets.write(\"old\")
     advance(10)
     tickets.write(\"new\")
-    print tickets.recent(5)
+    speak tickets.recent(5)
 }
 ";
     assert_eq!(run(src), "[new]\n");
@@ -103,7 +103,7 @@ fn audited_access_produces_a_record() {
     let src = "\
 memory tickets { scope tenant, audit required }
 within tenant { tickets.write(\"x\") }
-print audit_log()
+speak audit_log()
 ";
     assert_eq!(run(src), "[memory=tickets op=write scope=tenant]\n");
 }
@@ -113,7 +113,7 @@ fn unaudited_memory_records_nothing() {
     let src = "\
 memory tickets { scope tenant }
 within tenant { tickets.write(\"x\") }
-print audit_log()
+speak audit_log()
 ";
     assert_eq!(run(src), "[]\n");
 }

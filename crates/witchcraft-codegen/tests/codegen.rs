@@ -48,9 +48,9 @@ fn assert_equivalent(src: &str) {
 
 #[test]
 fn arithmetic_and_functions() {
-    assert_equivalent("fn add(a, b) { a + b }\nprint add(2, 3)");
-    assert_equivalent("print 2 + 3 * 4 - 1");
-    assert_equivalent("print 10 / 4");
+    assert_equivalent("define add(a, b) { a + b }\nspeak add(2, 3)");
+    assert_equivalent("speak 2 + 3 * 4 - 1");
+    assert_equivalent("speak 10 / 4");
 }
 
 #[test]
@@ -68,10 +68,10 @@ familiar handle(ticket) permits { invoke triage } {
         using triage
         with confidence >= 0.0
         fallback \"low\"
-    print \"urgency: ${decision.urgency}\"
+    speak \"urgency: ${decision.urgency}\"
     enact decision.action {
-        Draft(reply) => { print \"drafted: ${reply}\" }
-        Escalate => { print \"escalate\" }
+        Draft(reply) => { speak \"drafted: ${reply}\" }
+        Escalate => { speak \"escalate\" }
     }
 }
 
@@ -82,20 +82,20 @@ handle(\"printer on fire\")
 
 #[test]
 fn comparisons_and_equality_and_booleans() {
-    assert_equivalent("print 1 < 2\nprint 3 <= 3\nprint 5 > 9\nprint 4 >= 4");
-    assert_equivalent("print 2 == 2\nprint 2 == 3\nprint 1 != 2");
-    assert_equivalent("print true and false\nprint true or false\nprint not true");
+    assert_equivalent("speak 1 < 2\nspeak 3 <= 3\nspeak 5 > 9\nspeak 4 >= 4");
+    assert_equivalent("speak 2 == 2\nspeak 2 == 3\nspeak 1 != 2");
+    assert_equivalent("speak true and false\nspeak true or false\nspeak not true");
 }
 
 #[test]
 fn glyph_interpolation() {
-    assert_equivalent("let who = \"witch\"\nprint \"hi ${who}, ${1 + 1} times\"");
+    assert_equivalent("let who = \"witch\"\nspeak \"hi ${who}, ${1 + 1} times\"");
 }
 
 #[test]
 fn control_flow() {
-    assert_equivalent("var n = 0\nwhile n < 3 { print n n = n + 1 }");
-    assert_equivalent("if 2 + 2 == 4 { print \"ok\" } else { print \"no\" }");
+    assert_equivalent("var n = 0\nwhile n < 3 { speak n n = n + 1 }");
+    assert_equivalent("if 2 + 2 == 4 { speak \"ok\" } else { speak \"no\" }");
 }
 
 #[test]
@@ -144,7 +144,7 @@ fn divine_field_access_matches_interpreter() {
         "{ACTION_TYPES}
 oracle o = summon \"m\"
 divine d: Disposition from (\"t\") using o with confidence >= 0.0 fallback \"f\"
-print d.urgency
+speak d.urgency
 "
     );
     for seed in [0u64, 1, 7, 42] {
@@ -161,7 +161,7 @@ fn compiled_litmus_deleting_the_type_changes_generation() {
 type Rating = spark in 0..5
 oracle o = summon \"m\"
 divine r: Rating from (\"x\") using o with confidence >= 0.0 fallback 0
-print r
+speak r
 ";
     let typed = run_capture(&lower(src), 3).expect("typed run");
     let untyped =
@@ -182,14 +182,14 @@ fn compiled_fault_injection_keeps_low_confidence_out_of_enact() {
     let src = format!(
         "{ACTION_TYPES}
 oracle o = summon \"m\"
-print \"start\"
+speak \"start\"
 divine d: Disposition from (\"t\") using o with confidence >= 0.8 fallback \"fb\"
 enact d.action {{
-    Draft(reply) => {{ print \"drafted\" }}
-    Escalate => {{ print \"escalated\" }}
-    AskClarify(question) => {{ print \"asked\" }}
+    Draft(reply) => {{ speak \"drafted\" }}
+    Escalate => {{ speak \"escalated\" }}
+    AskClarify(question) => {{ speak \"asked\" }}
 }}
-print \"end\"
+speak \"end\"
 "
     );
     let ir = lower(&src);
@@ -250,11 +250,11 @@ fn capabilities_are_erased_and_compiled_matches_interpreter() {
     // `requires` / `with grant` carry no runtime behaviour: a granted program
     // compiles, runs, and matches the interpreter.
     let src = "\
-fn escalate(): glyph requires permit(escalate) { \"escalated\" }
+define escalate(): glyph requires permit(escalate) { \"escalated\" }
 with grant permit(escalate) {
-    print escalate()
+    speak escalate()
 }
-print \"done\"
+speak \"done\"
 ";
     assert_equivalent(src);
     assert_eq!(compiled(src, 0), "escalated\ndone\n");
@@ -265,16 +265,16 @@ fn grant_region_compiles_to_its_body() {
     // The same program with the capability scaffolding removed produces identical
     // output — proving the grant region erases to a plain block.
     let with_caps = "\
-fn act(): glyph requires permit(escalate), scope(tenant) { \"acted\" }
+define act(): glyph requires permit(escalate), scope(tenant) { \"acted\" }
 var n = 0
 with grant permit(escalate), scope(tenant) {
-    while n < 3 { print \"${n}:${act()}\" n = n + 1 }
+    while n < 3 { speak \"${n}:${act()}\" n = n + 1 }
 }
 ";
     let stripped = "\
-fn act(): glyph { \"acted\" }
+define act(): glyph { \"acted\" }
 var n = 0
-while n < 3 { print \"${n}:${act()}\" n = n + 1 }
+while n < 3 { speak \"${n}:${act()}\" n = n + 1 }
 ";
     assert_eq!(compiled(with_caps, 0), compiled(stripped, 0));
     assert_eq!(compiled(with_caps, 0), interpreted(with_caps, 0));
@@ -284,10 +284,10 @@ while n < 3 { print \"${n}:${act()}\" n = n + 1 }
 
 #[test]
 fn list_literals_match_interpreter() {
-    assert_equivalent("let xs = [1, 2, 3]\nprint xs");
-    assert_equivalent("print [true, false, true]");
-    assert_equivalent("let xs = [\"a\", \"b\"]\nprint xs == [\"a\", \"b\"]");
-    assert_equivalent("print [[1, 2], [3, 4]]");
+    assert_equivalent("let xs = [1, 2, 3]\nspeak xs");
+    assert_equivalent("speak [true, false, true]");
+    assert_equivalent("let xs = [\"a\", \"b\"]\nspeak xs == [\"a\", \"b\"]");
+    assert_equivalent("speak [[1, 2], [3, 4]]");
 }
 
 #[test]
@@ -299,13 +299,13 @@ fn embedding_similarity_matches_interpreter() {
         "oracle e = summon \"space-x\"
 let a = e.embed(\"hello world\")
 let b = e.embed(\"hello world\")
-print similarity(a, b)",
+speak similarity(a, b)",
     );
     assert_equivalent(
         "oracle e = summon \"space-x\"
 let a = e.embed(\"hello world\")
 let b = e.embed(\"goodbye cruel world\")
-print similarity(a, b)",
+speak similarity(a, b)",
     );
 }
 
@@ -321,8 +321,8 @@ let c0 = e.embed(\"payment is urgent\")
 let c1 = e.embed(\"the weather is nice today\")
 let c2 = e.embed(\"urgent ticket\")
 let cands = [c0, c1, c2]
-print nearest(q, cands, 2)
-print nearest(q, cands, 1) == [e.embed(\"payment is urgent\")]
+speak nearest(q, cands, 2)
+speak nearest(q, cands, 1) == [e.embed(\"payment is urgent\")]
 ";
     assert_equivalent(src);
 }
@@ -335,8 +335,8 @@ within tenant {
     log.write(\"first\")
     log.write(\"second\")
     log.write(\"third\")
-    print log.recent(2)
-    print audit_log()
+    speak log.recent(2)
+    speak audit_log()
 }
 ";
     assert_equivalent(src);
@@ -352,7 +352,7 @@ within tenant {
     log.write(\"old\")
     advance(5)
     log.write(\"new\")
-    print log.recent(5)
+    speak log.recent(5)
 }
 ";
     assert_equivalent(src);
@@ -363,9 +363,9 @@ fn within_with_no_memory_erases_to_its_body() {
     let src = "\
 var n = 0
 within tenant {
-    while n < 3 { print n n = n + 1 }
+    while n < 3 { speak n n = n + 1 }
 }
-print \"done\"
+speak \"done\"
 ";
     assert_equivalent(src);
     assert_eq!(compiled(src, 0), "0\n1\n2\ndone\n");
@@ -388,7 +388,7 @@ fn out_of_scope_memory_access_is_a_compile_error_on_the_native_path() {
     // reaches codegen — the same compile error the interpreter raises.
     let src = "\
 memory tickets { scope tenant }
-print tickets.recent(5)
+speak tickets.recent(5)
 ";
     let err = lower_source(src).expect_err("must not lower");
     let msg = err.iter().map(|d| d.message.clone()).collect::<String>();
@@ -402,7 +402,7 @@ oracle a = summon \"model-a\"
 oracle b = summon \"model-b\"
 let ea = a.embed(\"x\")
 let eb = b.embed(\"y\")
-print similarity(ea, eb)
+speak similarity(ea, eb)
 ";
     let err = lower_source(src).expect_err("must not lower");
     let msg = err.iter().map(|d| d.message.clone()).collect::<String>();
@@ -420,7 +420,7 @@ while n < 2000 {
     let xs = [e.embed(\"${n}\"), e.embed(\"x\")]
     n = n + 1
 }
-print \"done\"
+speak \"done\"
 ";
     let ir = lower_source(src).expect("lower");
     let before = witchcraft_runtime::live_objects();
@@ -438,7 +438,7 @@ fn loop_local_heap_is_reclaimed_in_compiled_code() {
     // A glyph is allocated each iteration (via interpolation) and printed. The
     // emitted reference-counting must reclaim it each iteration so the live heap
     // count returns to its baseline after the loop.
-    let src = "var n = 0\nwhile n < 5000 { print \"n=${n}\" n = n + 1 }";
+    let src = "var n = 0\nwhile n < 5000 { speak \"n=${n}\" n = n + 1 }";
     let ir = lower_source(src).expect("lower");
     let before = witchcraft_runtime::live_objects();
     let out = run_capture(&ir, 0).expect("run");
@@ -532,7 +532,7 @@ type Action = one_of { Draft(reply: glyph), Escalate }
 type Disposition = { urgency: spark in 0..10, action: Action }
 oracle cloud = summon \"CloudReasoner\"
 divine d: Disposition from (\"angry customer\") using cloud with confidence >= 0.0 fallback \"low confidence\"
-print d.urgency
+speak d.urgency
 ";
     let manifest = "\
 [need.CloudReasoner]
@@ -605,7 +605,7 @@ type Rating = spark in 0..5
 oracle cloud = summon \"CloudReasoner\"
 with grant permit(network) {
     divine r: Rating from (\"rate this 0..5\") using cloud with confidence >= 0.0 fallback 0
-    print r
+    speak r
 }
 ";
     let manifest = format!(

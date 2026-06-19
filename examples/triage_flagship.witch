@@ -23,8 +23,8 @@ oracle triage = summon "mock-triage-v1"
 
 memory tickets { scope tenant, retention 24 months, retrieval recency, audit required }
 
-fn escalate() requires escalate {
-    print "escalated (fallback): low confidence"
+define escalate() requires escalate {
+    speak "escalated (fallback): low confidence"
 }
 
 familiar support_triage(msg) permits { invoke triage, escalate } {
@@ -36,7 +36,7 @@ familiar support_triage(msg) permits { invoke triage, escalate } {
     within tenant {
         tickets.write(msg)
         let history = tickets.recent(5)
-        print "recalled scoped history"
+        speak "recalled scoped history"
     }
 
     # Infer a typed Disposition; the result must clear the confidence gate before
@@ -47,21 +47,21 @@ familiar support_triage(msg) permits { invoke triage, escalate } {
         with confidence >= 0.5
         fallback escalate()
 
-    print "urgency: ${decision.urgency}"
+    speak "urgency: ${decision.urgency}"
 
     # Dispatch over exactly the declared actions.
     enact decision.action {
         Draft(reply) => {
-            print "drafted reply: ${reply}"
-            print "provenance: ${provenance}"
+            speak "drafted reply: ${reply}"
+            speak "provenance: ${provenance}"
         }
         Escalate => {
-            print "escalated to a human"
-            print "provenance: ${provenance}"
+            speak "escalated to a human"
+            speak "provenance: ${provenance}"
         }
         AskClarify(question) => {
-            print "asked: ${question}"
-            print "provenance: ${provenance}"
+            speak "asked: ${question}"
+            speak "provenance: ${provenance}"
         }
     }
 }

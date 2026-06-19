@@ -47,7 +47,7 @@ pub fn run(prog: &Program, config: RunConfig) -> Result<String, Diagnostic> {
 
 struct Interp {
     env: Env,
-    fns: HashMap<String, FnDecl>,
+    fns: HashMap<String, DefineDecl>,
     familiars: HashMap<String, FamiliarDecl>,
     types: HashMap<String, Type>,
     /// The Mock engine that serves every need when no manifest is present (the
@@ -78,7 +78,7 @@ impl Interp {
         let mut familiars = HashMap::new();
         for item in &prog.items {
             match item {
-                Item::Fn(f) => {
+                Item::Define(f) => {
                     fns.insert(f.name.clone(), f.clone());
                 }
                 Item::Familiar(fam) => {
@@ -187,7 +187,7 @@ impl Interp {
                     )),
                 }
             }
-            Stmt::Print { value, .. } => {
+            Stmt::Speak { value, .. } => {
                 let v = self.eval(value)?;
                 self.emit(&v.display());
                 Ok(Exec::Value(Value::Unit))
@@ -781,6 +781,26 @@ impl Interp {
             "audit_log" => Ok(Some(Value::List(
                 self.audit.iter().cloned().map(Value::Glyph).collect(),
             ))),
+            "listen" => {
+                if args.len() != 1 {
+                    return Err(Diagnostic::runtime(
+                        "`listen` takes one glyph prompt argument".to_string(),
+                        span,
+                    ));
+                }
+                let _prompt = &args[0];
+                let mut line = String::new();
+                std::io::stdin().read_line(&mut line).map_err(|e| {
+                    Diagnostic::runtime(format!("stdin read failed: {}", e), span)
+                })?;
+                if line.ends_with('\n') {
+                    line.pop();
+                    if line.ends_with('\r') {
+                        line.pop();
+                    }
+                }
+                Ok(Some(Value::Glyph(line)))
+            }
             _ => Ok(None),
         }
     }
@@ -933,7 +953,7 @@ pub(crate) fn oracle_policies(prog: &Program) -> HashMap<String, (Policy, Span)>
     let mut var_to_intent: HashMap<String, String> = HashMap::new();
     for item in &prog.items {
         match item {
-            Item::Fn(f) => collect_summons(&f.body, &mut var_to_intent),
+            Item::Define(f) => collect_summons(&f.body, &mut var_to_intent),
             Item::Familiar(fam) => collect_summons(&fam.body, &mut var_to_intent),
             Item::Stmt(s) => collect_summons(std::slice::from_ref(s), &mut var_to_intent),
             Item::Type(_) => {}
@@ -943,7 +963,7 @@ pub(crate) fn oracle_policies(prog: &Program) -> HashMap<String, (Policy, Span)>
     let mut out: HashMap<String, (Policy, Span)> = HashMap::new();
     for item in &prog.items {
         match item {
-            Item::Fn(f) => walk_policy(&f.body, &cap_names(&f.requires), &var_to_intent, &mut out),
+            Item::Define(f) => walk_policy(&f.body, &cap_names(&f.requires), &var_to_intent, &mut out),
             Item::Familiar(fam) => walk_policy(
                 &fam.body,
                 &cap_names(&fam.permits),

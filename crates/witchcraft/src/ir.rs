@@ -107,7 +107,7 @@ pub enum Instr {
         callee: String,
         args: Vec<Operand>,
     },
-    Print {
+    Speak {
         val: Operand,
     },
 
@@ -146,6 +146,11 @@ pub enum Instr {
         oracle: String,
         space: String,
         input: Operand,
+    },
+    /// `listen(prompt)` — blocking read of one stdin line (human boundary).
+    Listen {
+        dst: Tmp,
+        prompt: Operand,
     },
     /// `similarity(a, b)` — cosine similarity of two embeddings (a spark).
     Similarity {

@@ -41,8 +41,8 @@ familiar support(ticket) permits {{ invoke triage }} {{
         with confidence >= 0.0
         fallback \"low\"
     enact decision.action {{
-        Draft(reply) => {{ print \"drafted: ${{reply}}\" }}
-        Escalate => {{ print \"escalated\" }}
+        Draft(reply) => {{ speak \"drafted: ${{reply}}\" }}
+        Escalate => {{ speak \"escalated\" }}
     }}
 }}
 support(\"printer on fire\")
@@ -59,7 +59,7 @@ support(\"printer on fire\")
 fn permitted_action_type_checks() {
     let src = format!(
         "{TYPES}
-fn delete() requires delete {{ print \"deleted\" }}
+define delete() requires delete {{ speak \"deleted\" }}
 familiar danger() permits {{ delete }} {{
     delete()
 }}
@@ -75,7 +75,7 @@ fn out_of_permit_action_will_not_compile() {
     // action: a permit violation naming the familiar and the action.
     let src = format!(
         "{TYPES}
-fn delete() requires delete {{ print \"gone\" }}
+define delete() requires delete {{ speak \"gone\" }}
 familiar support() permits {{ invoke triage }} {{
     delete()
 }}
@@ -97,7 +97,7 @@ familiar support(ticket) permits {{ escalate }} {{
         using triage
         with confidence >= 0.0
         fallback \"low\"
-    print decision.urgency
+    speak decision.urgency
 }}
 support(\"x\")
 "
@@ -112,7 +112,7 @@ fn unbounded_iteration_is_rejected() {
     let src = format!(
         "{TYPES}
 familiar loopy() permits {{ }} {{
-    while true {{ print \"x\" }}
+    while true {{ speak \"x\" }}
 }}
 "
     );
@@ -127,7 +127,7 @@ fn ambient_divine_outside_familiar_needs_no_permit() {
     let src = format!(
         "{TYPES}
 divine d: Disposition from (\"x\") using triage with confidence >= 0.0 fallback \"low\"
-print d.urgency
+speak d.urgency
 "
     );
     assert!(check_source(&src).is_ok());

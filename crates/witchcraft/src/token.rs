@@ -1,7 +1,7 @@
-//! Tokens. Mundane keywords are un-themed (`fn let var while if else print`,
-//! per §7); occult vocabulary is reserved for the genuinely new (`oracle summon
-//! divine enact fallback`). Type names `spark`/`glyph` arrive as identifiers and
-//! are resolved in type position.
+//! Tokens. Mundane keywords are plain (`define let var while if else return`);
+//! evocative vocabulary names the intelligence/human boundary (`oracle summon
+//! divine enact fallback speak listen`). Type names `spark`/`glyph` arrive as
+//! identifiers and are resolved in type position.
 
 use crate::span::Span;
 
@@ -22,22 +22,23 @@ pub enum TokenKind {
     False,
     Ident(String),
 
-    // Mundane keywords (un-themed)
-    Fn,
+    // Mundane keywords (plain register)
+    Define,
     Let,
     Var,
     While,
     If,
     Else,
-    Print,
     Return,
 
-    // Occult keywords (genuinely new)
+    // Evocative keywords (intelligence / human boundary)
     Oracle,
     Summon,
     Divine,
     Enact,
     Fallback,
+    Speak,
+    Listen,
 
     // Type / clause keywords
     Type,
@@ -109,14 +110,15 @@ impl Token {
 /// Map an identifier to its keyword token, if it is one.
 pub fn keyword(ident: &str) -> Option<TokenKind> {
     Some(match ident {
-        "fn" => TokenKind::Fn,
+        "define" => TokenKind::Define,
         "let" => TokenKind::Let,
         "var" => TokenKind::Var,
         "while" => TokenKind::While,
         "if" => TokenKind::If,
         "else" => TokenKind::Else,
-        "print" => TokenKind::Print,
         "return" => TokenKind::Return,
+        "speak" => TokenKind::Speak,
+        "listen" => TokenKind::Listen,
         "oracle" => TokenKind::Oracle,
         "summon" => TokenKind::Summon,
         "divine" => TokenKind::Divine,

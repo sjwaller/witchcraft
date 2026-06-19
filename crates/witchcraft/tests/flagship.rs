@@ -63,7 +63,7 @@ fn undischarged_divine_will_not_compile() {
     let src = format!(
         "{HEADER}
 divine decision: Disposition from (\"x\") using triage
-print decision.urgency
+speak decision.urgency
 "
     );
     assert!(
@@ -78,7 +78,7 @@ print decision.urgency
 fn unscoped_memory_read_will_not_compile() {
     let src = "\
 memory tickets { scope tenant }
-print tickets.recent(5)
+speak tickets.recent(5)
 ";
     let err = check_err(src);
     assert!(err.contains("tickets") && err.contains("tenant"), "{err}");
@@ -91,7 +91,7 @@ oracle a = summon \"model-a\"
 oracle b = summon \"model-b\"
 let ea = a.embed(\"x\")
 let eb = b.embed(\"y\")
-print similarity(ea, eb)
+speak similarity(ea, eb)
 ";
     let err = check_err(src);
     assert!(err.contains("model-a") && err.contains("model-b"), "{err}");
@@ -101,7 +101,7 @@ print similarity(ea, eb)
 fn out_of_permit_familiar_action_will_not_compile() {
     let src = format!(
         "{HEADER}
-fn delete() requires delete {{ print \"gone\" }}
+define delete() requires delete {{ speak \"gone\" }}
 familiar support_triage(msg) permits {{ invoke triage }} {{
     delete()
 }}
@@ -124,7 +124,7 @@ fn deleting_the_type_changes_generation() {
     let src = format!(
         "{HEADER}
 divine d: Disposition from (\"x\") using triage with confidence >= 0.0 fallback \"f\"
-print d
+speak d
 "
     );
     let typed = run_cfg(
