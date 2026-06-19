@@ -93,9 +93,15 @@ fn run(args: &[String]) -> Result<String, CliError> {
             let config = RunConfig {
                 seed,
                 manifest,
+                // Stream the transcript live so interactive programs (`listen`)
+                // show prompts before they block on stdin, instead of buffering
+                // everything until the program ends.
+                stream: true,
                 ..RunConfig::default()
             };
-            run_source(&src, config).map_err(CliError::Diagnostics)
+            // Output already went to stdout as it was produced; don't reprint.
+            run_source(&src, config).map_err(CliError::Diagnostics)?;
+            Ok(String::new())
         }
         "-h" | "--help" | "help" => Ok(format!("{}\n", USAGE)),
         other => Err(CliError::Usage(format!(

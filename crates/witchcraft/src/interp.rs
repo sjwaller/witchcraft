@@ -28,6 +28,13 @@ pub struct RunConfig {
     /// oracle's intent is resolved to a concrete engine at load; when absent the
     /// deterministic Mock engine serves every need (the offline default).
     pub manifest: Option<Manifest>,
+    /// Stream `speak` output (and `listen` prompts) to stdout live, flushed per
+    /// line, instead of only returning it at program end. Interactive programs
+    /// that `listen` mid-run need this so prompts appear *before* input is read;
+    /// otherwise the whole transcript is buffered and the user sees nothing while
+    /// the program blocks on stdin. Off by default so library callers (and the
+    /// test suite) keep the deterministic "return the full transcript" contract.
+    pub stream: bool,
 }
 
 enum Exec {
@@ -139,6 +146,13 @@ impl Interp {
     fn emit(&mut self, line: &str) {
         self.out.push_str(line);
         self.out.push('\n');
+        if self.config.stream {
+            use std::io::Write;
+            let stdout = std::io::stdout();
+            let mut h = stdout.lock();
+            let _ = writeln!(h, "{}", line);
+            let _ = h.flush();
+        }
     }
 
     fn exec_block(&mut self, stmts: &[Stmt]) -> Result<Exec, Diagnostic> {
@@ -798,7 +812,17 @@ impl Interp {
                         span,
                     ));
                 }
-                let _prompt = &args[0];
+                // Show the prompt before blocking on stdin so an interactive
+                // user knows input is expected (it has no trailing newline, so
+                // it must be flushed explicitly). Only when streaming — the
+                // buffered library path keeps the prompt out of the transcript.
+                if self.config.stream {
+                    use std::io::Write;
+                    let stdout = std::io::stdout();
+                    let mut h = stdout.lock();
+                    let _ = write!(h, "{}", args[0].display());
+                    let _ = h.flush();
+                }
                 let mut line = String::new();
                 std::io::stdin()
                     .read_line(&mut line)
