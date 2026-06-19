@@ -63,9 +63,10 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          staging="witch-${{ github.ref_name }}-${{ matrix.target }}"
+          staging="witchcraft-${{ github.ref_name }}-${{ matrix.target }}"
           mkdir -p "$staging"
           cp "target/${{ matrix.target }}/release/witch" "$staging/"
+          cp "target/${{ matrix.target }}/release/grimoire" "$staging/"
           cp README.md LICENSE* "$staging/" 2>/dev/null || true
           tar czf "$staging.tar.gz" "$staging"
           shasum -a 256 "$staging.tar.gz" > "$staging.tar.gz.sha256"
@@ -74,9 +75,10 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          staging="witch-${{ github.ref_name }}-${{ matrix.target }}"
+          staging="witchcraft-${{ github.ref_name }}-${{ matrix.target }}"
           mkdir -p "$staging"
           cp "target/${{ matrix.target }}/release/witch.exe" "$staging/"
+          cp "target/${{ matrix.target }}/release/grimoire.exe" "$staging/"
           cp README.md "$staging/" 2>/dev/null || true
           7z a "$staging.zip" "$staging"
           certutil -hashfile "$staging.zip" SHA256 > "$staging.zip.sha256"
@@ -84,10 +86,10 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: witch-${{ matrix.target }}
+          name: witchcraft-${{ matrix.target }}
           path: |
-            witch-*.tar.gz*
-            witch-*.zip*
+            witchcraft-*.tar.gz*
+            witchcraft-*.zip*
 
   publish:
     name: publish release
