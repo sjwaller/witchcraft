@@ -790,9 +790,9 @@ impl Interp {
                 }
                 let _prompt = &args[0];
                 let mut line = String::new();
-                std::io::stdin().read_line(&mut line).map_err(|e| {
-                    Diagnostic::runtime(format!("stdin read failed: {}", e), span)
-                })?;
+                std::io::stdin()
+                    .read_line(&mut line)
+                    .map_err(|e| Diagnostic::runtime(format!("stdin read failed: {}", e), span))?;
                 if line.ends_with('\n') {
                     line.pop();
                     if line.ends_with('\r') {
@@ -963,7 +963,9 @@ pub(crate) fn oracle_policies(prog: &Program) -> HashMap<String, (Policy, Span)>
     let mut out: HashMap<String, (Policy, Span)> = HashMap::new();
     for item in &prog.items {
         match item {
-            Item::Define(f) => walk_policy(&f.body, &cap_names(&f.requires), &var_to_intent, &mut out),
+            Item::Define(f) => {
+                walk_policy(&f.body, &cap_names(&f.requires), &var_to_intent, &mut out)
+            }
             Item::Familiar(fam) => walk_policy(
                 &fam.body,
                 &cap_names(&fam.permits),
