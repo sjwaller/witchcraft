@@ -1,5 +1,11 @@
 name: CI
 
+# Full workspace validation on native-arch runners. This is where grimoire's
+# native-build integration tests (crates/grimoire/tests/build.rs — compile a
+# .witch to a native binary and assert compiled == interpreted) gate merges.
+# The Release workflow builds and packages grimoire for every target but does
+# NOT run those link-sensitive tests in the cross-platform matrix.
+
 on:
   push:
     branches: [main]
@@ -20,7 +26,7 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
       - name: Build
         run: cargo build --all
-      - name: Test
+      - name: Test (full workspace, incl. grimoire native-build)
         run: cargo test --all
       - name: Compile and run example executables (ship path)
         run: |
