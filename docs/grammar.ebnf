@@ -76,9 +76,11 @@ postfix        = primary { "." ident [ "(" [ expr { "," expr } ] ")" ] } ;
 primary        = number | "true" | "false" | glyph_literal
                | "listen" "(" expr ")"
                | "(" expr ")"
+               | record_literal
                | list
                | ident [ "(" [ expr { "," expr } ] ")" ]    (* call / builtin (similarity, nearest, listen) *)
                | Ident [ "(" [ field_init { "," field_init } ] ")" ] ; (* variant ctor *)
+record_literal = "{" [ field_init { "," field_init } ] "}" ;
 field_init     = ident [ ":" expr ] ;
 list           = "[" [ expr { "," expr } ] "]" ;       (* homogeneous list literal *)
 (* postfix `.embed(...)` on an oracle yields a space-tagged embedding *)

@@ -816,6 +816,12 @@ impl Parser {
                 self.expect(TokenKind::RParen, "`)`")?;
                 Ok(e)
             }
+            TokenKind::LBrace => {
+                self.bump();
+                let fields = self.record_literal_fields()?;
+                self.expect(TokenKind::RBrace, "`}` to close the record literal")?;
+                Ok(Expr::Record { fields, span })
+            }
             TokenKind::LBracket => {
                 self.bump();
                 let mut items = Vec::new();
@@ -881,6 +887,20 @@ impl Parser {
             }
         }
         Ok(())
+    }
+
+    fn record_literal_fields(&mut self) -> Result<Vec<(String, Expr)>, Diagnostic> {
+        let mut fields = Vec::new();
+        while !self.check(&TokenKind::RBrace) {
+            let (fname, _) = self.expect_ident("a field name")?;
+            self.expect(TokenKind::Colon, "`:` after the field name")?;
+            let value = self.expr()?;
+            fields.push((fname, value));
+            if !self.eat(&TokenKind::Comma) {
+                break;
+            }
+        }
+        Ok(fields)
     }
 
     fn variant_fields(&mut self) -> Result<Vec<(String, Expr)>, Diagnostic> {

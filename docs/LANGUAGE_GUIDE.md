@@ -228,6 +228,20 @@ type Reading = {
 A value of type `Reading` has all three fields. You read them with a dot:
 `r.feeling`, `r.urgency`, `r.needs_human`.
 
+You can also **construct** a record value with a record literal — plain data, not
+an object with methods:
+
+```witchcraft
+let reading: Reading = {
+    feeling: "uneasy",
+    urgency: 7,
+    needs_human: true
+}
+```
+
+Record literals are especially useful as `divine ... fallback { ... }` values: the
+compiler checks that every field matches the declared output type before you run.
+
 ### Refined numbers
 
 This is where types start doing real work. `spark in 0..10` means "a number,

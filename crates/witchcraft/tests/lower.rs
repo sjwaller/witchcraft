@@ -16,6 +16,8 @@ type Action = one_of {
 type Disposition = { urgency: spark in 0..10, action: Action }
 ";
 
+const DISPOSITION_FALLBACK: &str = "{ urgency: 0, action: Escalate }";
+
 fn lower(src: &str) -> Program {
     lower_source(src).unwrap_or_else(|ds| {
         panic!(
@@ -41,6 +43,27 @@ fn all_instrs(f: &Function) -> Vec<&Instr> {
 
 fn terminators(f: &Function) -> Vec<&Terminator> {
     f.blocks.iter().map(|b| &b.term).collect()
+}
+
+#[test]
+fn record_literal_lowers_to_make_record() {
+    let p = lower(
+        "\
+type Pair = { a: spark, b: spark }
+define show() {
+    let p = { a: 1, b: 2 }
+    speak p.a
+}
+show()
+",
+    );
+    let show = func(&p, "show");
+    assert!(
+        all_instrs(show)
+            .iter()
+            .any(|i| matches!(i, Instr::MakeRecord { .. })),
+        "record literal becomes MakeRecord"
+    );
 }
 
 #[test]
@@ -106,7 +129,7 @@ fn divine_with_threshold_emits_decode_grammar_and_discharge_branch() {
     let src = format!(
         "{ACTION_TYPES}
 oracle o = summon \"m\"
-divine d: Disposition from (\"t\") using o with confidence >= 0.8 fallback \"fb\"
+divine d: Disposition from (\"t\") using o with confidence >= 0.8 fallback {DISPOSITION_FALLBACK}
 speak d.urgency
 "
     );
@@ -175,7 +198,7 @@ fn enact_lowers_to_a_tag_switch_and_interns_variants() {
     let src = format!(
         "{ACTION_TYPES}
 oracle o = summon \"m\"
-divine d: Disposition from (\"t\") using o with confidence >= 0.0 fallback \"fb\"
+divine d: Disposition from (\"t\") using o with confidence >= 0.0 fallback {DISPOSITION_FALLBACK}
 enact d.action {{
     Draft(reply) => {{ speak \"drafted\" }}
     Escalate => {{ speak \"escalated\" }}

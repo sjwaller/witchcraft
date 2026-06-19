@@ -13,6 +13,8 @@ type Disposition = { urgency: spark in 0..10, action: Action }
 oracle triage = summon \"mock-triage-v1\"
 ";
 
+const DISPOSITION_FALLBACK: &str = "{ urgency: 0, action: Escalate }";
+
 fn run_cfg(src: &str, cfg: RunConfig) -> String {
     run_source(src, cfg).unwrap_or_else(|ds| {
         panic!(
@@ -123,7 +125,7 @@ fn deleting_the_type_changes_generation() {
     // weakened run (as if the type were deleted) is not, so output differs.
     let src = format!(
         "{HEADER}
-divine d: Disposition from (\"x\") using triage with confidence >= 0.0 fallback \"f\"
+divine d: Disposition from (\"x\") using triage with confidence >= 0.0 fallback {DISPOSITION_FALLBACK}
 speak d
 "
     );

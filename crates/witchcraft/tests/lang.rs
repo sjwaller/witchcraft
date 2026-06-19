@@ -17,6 +17,8 @@ type Action = one_of {
 type Disposition = { urgency: spark in 0..10, action: Action }
 ";
 
+const DISPOSITION_FALLBACK: &str = "{ urgency: 0, action: Escalate }";
+
 fn run(src: &str, config: RunConfig) -> String {
     run_source(src, config).unwrap_or_else(|ds| {
         panic!(
@@ -93,7 +95,7 @@ fn same_seed_same_output() {
     let src = format!(
         "{ACTION_TYPES}
 oracle o = summon \"m\"
-divine d: Disposition from (\"t\") using o with confidence >= 0.0 fallback \"f\"
+divine d: Disposition from (\"t\") using o with confidence >= 0.0 fallback {DISPOSITION_FALLBACK}
 speak d.urgency
 "
     );
@@ -163,7 +165,7 @@ fn low_confidence_value_never_reaches_enact() {
         "{ACTION_TYPES}
 oracle o = summon \"m\"
 speak \"start\"
-divine d: Disposition from (\"t\") using o with confidence >= 0.8 fallback \"fb\"
+divine d: Disposition from (\"t\") using o with confidence >= 0.8 fallback {DISPOSITION_FALLBACK}
 enact d.action {{
     Draft(reply) => {{ speak \"drafted\" }}
     Escalate => {{ speak \"escalated\" }}
@@ -231,7 +233,7 @@ fn non_exhaustive_enact_is_a_compile_error() {
     let src = format!(
         "{ACTION_TYPES}
 oracle o = summon \"m\"
-divine d: Disposition from (\"t\") using o with confidence >= 0.0 fallback \"f\"
+divine d: Disposition from (\"t\") using o with confidence >= 0.0 fallback {DISPOSITION_FALLBACK}
 enact d.action {{
     Draft(reply) => {{}}
     Escalate => {{}}
@@ -246,7 +248,7 @@ fn unknown_variant_in_enact_is_a_compile_error() {
     let src = format!(
         "{ACTION_TYPES}
 oracle o = summon \"m\"
-divine d: Disposition from (\"t\") using o with confidence >= 0.0 fallback \"f\"
+divine d: Disposition from (\"t\") using o with confidence >= 0.0 fallback {DISPOSITION_FALLBACK}
 enact d.action {{
     Draft(reply) => {{}}
     Escalate => {{}}
@@ -280,6 +282,54 @@ fn rejects_legacy_fn_and_print() {
     use witchcraft::parser::parse;
     assert!(parse("fn f() { }").is_err());
     assert!(parse("print \"x\"").is_err());
+}
+
+#[test]
+fn parses_record_literal_in_expression_positions() {
+    use witchcraft::ast::{Expr, Item, Stmt};
+    use witchcraft::parser::parse;
+    let src = "\
+type Point = { x: spark, y: spark }
+let p: Point = { x: 1, y: 2 }
+define show(p: Point) { speak p.x }
+speak show({ x: 3, y: 4 })
+";
+    let prog = parse(src).expect("record literal parses");
+    match &prog.items[1] {
+        Item::Stmt(Stmt::Let { value, .. }) => {
+            assert!(matches!(value, Expr::Record { .. }));
+        }
+        other => panic!("expected let with record literal, got {:?}", other),
+    }
+}
+
+#[test]
+fn divine_fallback_record_literal_must_match_output_type() {
+    let src = "\
+type Point = { x: spark, y: spark }
+oracle dm = summon \"m\"
+divine t: Point from (\"x\") using dm with confidence >= 0.5 fallback {
+    x: 1
+}
+";
+    let err = check_err(src);
+    assert!(
+        err.contains("missing field"),
+        "expected missing field error: {err}"
+    );
+}
+
+#[test]
+fn divine_fallback_record_literal_accepts_well_formed_shape() {
+    let src = "\
+type Turn = { narration: glyph, danger: spark in 0..10 }
+oracle dm = summon \"m\"
+divine t: Turn from (\"x\") using dm with confidence >= 0.5 fallback {
+    narration: \"idle\",
+    danger: 0
+}
+";
+    check_source(src).expect("well-formed fallback record literal");
 }
 
 // ---------- capabilities: surface syntax (compile-time only) ----------

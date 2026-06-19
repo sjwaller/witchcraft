@@ -556,6 +556,16 @@ impl Interp {
                 }
                 Ok(Value::List(vs))
             }
+            Expr::Record { fields, .. } => {
+                let mut fv = Vec::with_capacity(fields.len());
+                for (n, fe) in fields {
+                    fv.push((n.clone(), self.eval(fe)?));
+                }
+                Ok(Value::Record {
+                    fields: fv,
+                    provenance: None,
+                })
+            }
         }
     }
 

@@ -30,6 +30,8 @@ type Disposition = { urgency: spark in 0..10, action: Action }
 oracle triage = summon \"mock-triage-v1\"
 ";
 
+const DISPOSITION_FALLBACK: &str = "{ urgency: 0, action: Escalate }";
+
 #[test]
 fn declare_and_run_a_bounded_familiar() {
     let src = format!(
@@ -39,7 +41,7 @@ familiar support(ticket) permits {{ invoke triage }} {{
         from (ticket)
         using triage
         with confidence >= 0.0
-        fallback \"low\"
+        fallback {DISPOSITION_FALLBACK}
     enact decision.action {{
         Draft(reply) => {{ speak \"drafted: ${{reply}}\" }}
         Escalate => {{ speak \"escalated\" }}
@@ -96,7 +98,7 @@ familiar support(ticket) permits {{ escalate }} {{
         from (ticket)
         using triage
         with confidence >= 0.0
-        fallback \"low\"
+        fallback {DISPOSITION_FALLBACK}
     speak decision.urgency
 }}
 support(\"x\")
@@ -126,7 +128,7 @@ fn ambient_divine_outside_familiar_needs_no_permit() {
     // Outside a familiar, divine is unrestricted (bootstrap semantics preserved).
     let src = format!(
         "{TYPES}
-divine d: Disposition from (\"x\") using triage with confidence >= 0.0 fallback \"low\"
+divine d: Disposition from (\"x\") using triage with confidence >= 0.0 fallback {DISPOSITION_FALLBACK}
 speak d.urgency
 "
     );

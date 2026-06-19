@@ -126,7 +126,7 @@ fn ill_typed_program_is_refused_with_no_artifact() {
 type Action = one_of { Draft(reply: glyph), Escalate }
 type Disposition = { urgency: spark in 0..10, action: Action }
 oracle o = summon \"m\"
-divine d: Disposition from (\"t\") using o with confidence >= 0.0 fallback \"f\"
+divine d: Disposition from (\"t\") using o with confidence >= 0.0 fallback { urgency: 0, action: Escalate }
 enact d.action {
     Draft(reply) => {}
 }

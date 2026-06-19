@@ -265,6 +265,11 @@ pub enum Expr {
         items: Vec<Expr>,
         span: Span,
     },
+    /// `{ field: expr, ... }` — a record literal (host-side value construction).
+    Record {
+        fields: Vec<(String, Expr)>,
+        span: Span,
+    },
 }
 
 impl Expr {
@@ -280,7 +285,8 @@ impl Expr {
             | Expr::Method { span: s, .. }
             | Expr::Field { span: s, .. }
             | Expr::Variant { span: s, .. }
-            | Expr::List { span: s, .. } => *s,
+            | Expr::List { span: s, .. }
+            | Expr::Record { span: s, .. } => *s,
         }
     }
 }

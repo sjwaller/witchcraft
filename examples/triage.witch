@@ -21,7 +21,10 @@ define handle(ticket) {
         from (ticket)
         using triage
         with confidence >= 0.0
-        fallback "escalated: low confidence"
+        fallback {
+            urgency: 10,
+            action: Escalate
+        }
 
     speak "urgency: ${decision.urgency}"
 

@@ -456,7 +456,7 @@ impl Checker {
             let _ = self.infer(input);
         }
         if let Some(fb) = &d.fallback {
-            let _ = self.infer(fb);
+            self.check_against(fb, &out);
         }
         // Discharge present -> plain T; absent -> Inferred<T> (must be discharged later).
         let bound = if d.threshold.is_some() {
@@ -548,6 +548,10 @@ impl Checker {
             }
             return;
         }
+        if let (Expr::Record { fields, span }, Type::Record(_)) = (e, expected) {
+            self.check_record_literal(fields, expected, *span);
+            return;
+        }
         // Variant against an expected sum type.
         if let (Expr::Variant { name, fields, span }, Type::Sum(variants)) = (e, expected) {
             match variants.iter().find(|v| &v.name == name) {
@@ -584,6 +588,38 @@ impl Checker {
                         actual.display()
                     ),
                     e.span(),
+                ));
+            }
+        }
+    }
+
+    fn check_record_literal(
+        &mut self,
+        fields: &[(String, Expr)],
+        expected: &Type,
+        span: crate::span::Span,
+    ) {
+        let Type::Record(expected_fields) = expected else {
+            return;
+        };
+        for (name, expr) in fields {
+            match expected_fields.iter().find(|(n, _)| n == name) {
+                Some((_, fty)) => self.check_against(expr, fty),
+                None => self.diags.push(Diagnostic::type_error(
+                    format!("unknown field `{}` in record literal", name),
+                    expr.span(),
+                )),
+            }
+        }
+        for (name, _) in expected_fields {
+            if !fields.iter().any(|(n, _)| n == name) {
+                self.diags.push(Diagnostic::type_error(
+                    format!(
+                        "missing field `{}` in record literal for type {}",
+                        name,
+                        expected.display()
+                    ),
+                    span,
                 ));
             }
         }
@@ -681,6 +717,13 @@ impl Checker {
                 }
             }
             Expr::Variant { .. } => Type::Unknown,
+            Expr::Record { fields, .. } => {
+                let mut out = Vec::with_capacity(fields.len());
+                for (n, fe) in fields {
+                    out.push((n.clone(), self.infer(fe)));
+                }
+                Type::Record(out)
+            }
             Expr::List { items, .. } => {
                 let mut elem = Type::Unknown;
                 for it in items {

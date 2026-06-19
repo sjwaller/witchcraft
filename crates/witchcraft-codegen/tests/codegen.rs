@@ -67,7 +67,7 @@ familiar handle(ticket) permits { invoke triage } {
         from (ticket)
         using triage
         with confidence >= 0.0
-        fallback \"low\"
+        fallback { urgency: 0, action: Escalate }
     speak \"urgency: ${decision.urgency}\"
     enact decision.action {
         Draft(reply) => { speak \"drafted: ${reply}\" }
@@ -123,6 +123,18 @@ type Action = one_of {
 type Disposition = { urgency: spark in 0..10, action: Action }
 ";
 
+const DISPOSITION_FALLBACK: &str = "{ urgency: 0, action: Escalate }";
+
+#[test]
+fn record_literal_matches_interpreter() {
+    let src = "\
+type Pair = { a: spark, b: spark }
+define show(p: Pair) { speak p.a }
+speak show({ a: 3, b: 4 })
+";
+    assert_eq!(compiled(src, 0), interpreted(src, 0));
+}
+
 #[test]
 fn triage_example_compiles_to_the_interpreter_golden() {
     // The §6.3 worked example: divine an inferred Disposition, discharge it, and
@@ -143,7 +155,7 @@ fn divine_field_access_matches_interpreter() {
     let src = format!(
         "{ACTION_TYPES}
 oracle o = summon \"m\"
-divine d: Disposition from (\"t\") using o with confidence >= 0.0 fallback \"f\"
+divine d: Disposition from (\"t\") using o with confidence >= 0.0 fallback {DISPOSITION_FALLBACK}
 speak d.urgency
 "
     );
@@ -183,7 +195,7 @@ fn compiled_fault_injection_keeps_low_confidence_out_of_enact() {
         "{ACTION_TYPES}
 oracle o = summon \"m\"
 speak \"start\"
-divine d: Disposition from (\"t\") using o with confidence >= 0.8 fallback \"fb\"
+divine d: Disposition from (\"t\") using o with confidence >= 0.8 fallback {DISPOSITION_FALLBACK}
 enact d.action {{
     Draft(reply) => {{ speak \"drafted\" }}
     Escalate => {{ speak \"escalated\" }}
@@ -527,13 +539,15 @@ fn compiled_program_refuses_to_start_on_unsatisfiable_policy() {
     // A network engine bound without `permit(network)` must refuse to start on
     // the compiled path too — the policy boundary is enforced at load (before any
     // generation), exactly as the interpreter does.
-    let src = "\
-type Action = one_of { Draft(reply: glyph), Escalate }
-type Disposition = { urgency: spark in 0..10, action: Action }
+    let src = format!(
+        "\
+type Action = one_of {{ Draft(reply: glyph), Escalate }}
+type Disposition = {{ urgency: spark in 0..10, action: Action }}
 oracle cloud = summon \"CloudReasoner\"
-divine d: Disposition from (\"angry customer\") using cloud with confidence >= 0.0 fallback \"low confidence\"
+divine d: Disposition from (\"angry customer\") using cloud with confidence >= 0.0 fallback {DISPOSITION_FALLBACK}
 speak d.urgency
-";
+"
+    );
     let manifest = "\
 [need.CloudReasoner]
 engine = \"frontier\"
@@ -543,7 +557,7 @@ locality = \"network\"
 [engine.frontier]
 kind = \"anthropic\"
 ";
-    let err = run_capture_with(&lower(src), RunOptions::seed(3).with_manifest(manifest))
+    let err = run_capture_with(&lower(&src), RunOptions::seed(3).with_manifest(manifest))
         .expect_err("must refuse to start");
     assert!(
         err.contains("refuse to start") && err.contains("permit(network)"),

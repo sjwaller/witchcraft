@@ -21,7 +21,10 @@ with grant permit(network) {
         from ("the customer is furious about a double charge")
         using triage
         with confidence >= 0.5
-        fallback "low confidence"
+        fallback {
+            urgency: 0,
+            action: Escalate
+        }
 
     speak "should never run: ${decision.urgency}"
 }

@@ -76,7 +76,7 @@ fn program_runs_when_manifest_binds_intent_to_mock() {
 type Action = one_of { Draft(reply: glyph), Escalate }
 type Disposition = { urgency: spark in 0..10, action: Action }
 oracle triage = summon \"TriageReasoner\"
-divine d: Disposition from (\"angry customer\") using triage with confidence >= 0.0 fallback \"low confidence\"
+divine d: Disposition from (\"angry customer\") using triage with confidence >= 0.0 fallback { urgency: 0, action: Escalate }
 speak d.urgency
 ";
     let cfg = RunConfig {
@@ -133,7 +133,7 @@ fn program_refuses_to_start_on_unsatisfiable_policy() {
 type Action = one_of { Draft(reply: glyph), Escalate }
 type Disposition = { urgency: spark in 0..10, action: Action }
 oracle cloud = summon \"CloudReasoner\"
-divine d: Disposition from (\"angry customer\") using cloud with confidence >= 0.0 fallback \"low confidence\"
+divine d: Disposition from (\"angry customer\") using cloud with confidence >= 0.0 fallback { urgency: 0, action: Escalate }
 speak d.urgency
 ";
     let cfg = RunConfig {

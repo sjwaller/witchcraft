@@ -606,6 +606,15 @@ impl LowerCtx {
                 fb.emit(Instr::MakeList { dst, items: ops });
                 Ok(Operand::Tmp(dst))
             }
+            Expr::Record { fields, .. } => {
+                let mut fv = Vec::with_capacity(fields.len());
+                for (n, fe) in fields {
+                    fv.push((n.clone(), self.lower_expr(fb, fe)?));
+                }
+                let dst = fb.fresh_tmp();
+                fb.emit(Instr::MakeRecord { dst, fields: fv });
+                Ok(Operand::Tmp(dst))
+            }
         }
     }
 
