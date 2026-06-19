@@ -66,9 +66,7 @@ jobs:
       # gated in ci.yml instead.
       - name: Test
         if: matrix.native_test
-        run: |
-          cargo test --release --locked --target ${{ matrix.target }} \
-            --workspace --exclude grimoire
+        run: cargo test --release --locked --target ${{ matrix.target }} --workspace --exclude grimoire
 
       - name: Build
         if: "!matrix.use_cross"
