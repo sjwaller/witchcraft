@@ -7,7 +7,7 @@
 - Fix/bring `examples/dungeon_master.witch` in line with implemented syntax (post #1–#4).
 - Ensure `witch check`, interactive `witch run`, and (where applicable) `grimoire build` pass.
 - Add integration test(s) for the example (deterministic Mock path + stdin scripting).
-- README examples list + LANGUAGE_GUIDE section: interactive game pattern, naming philosophy, non-OO note cross-links.
+- README examples list + LANGUAGE.md section: interactive game pattern, naming philosophy, non-OO note cross-links.
 - **Depends on:** `rename-keywords`, `add-record-literals`, `add-list-types`, `add-constrained-list-generation`.
 
 ## Capabilities

@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Witchcraft — seeing it work</title>
+<meta name="description" content="Two small games that demonstrate the thesis: a model improvises freely while the type makes the rules unbreakable. Shown against real local and frontier models.">
+<meta property="og:title" content="Witchcraft — seeing it work">
+<meta property="og:description" content="A model improvises freely; the type makes the rules unbreakable. Demonstrated, not asserted.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://getwitch.dev/walkthrough.html">
+<meta property="og:image" content="https://getwitch.dev/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://getwitch.dev/og-image.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500;1,600&family=Spline+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#120f1b;--ink-2:#1b1629;--ink-3:#2a2340;
+    --bone:#ece5d8;--bone-dim:#a8a194;--bone-faint:#736d63;
+    --gold:#d4ac35;--gold-bright:#f0cb55;--gold-soft:#9a7d2a;
+    --spectral:#62dcc8;--ember:#df6a40;--violet:#b59bd6;
+    --maxw:1100px;--r:16px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}*{animation:none!important;transition:none!important}}
+  body{background:var(--ink);color:var(--bone);font-family:'Spline Sans',system-ui,sans-serif;
+    font-size:17px;line-height:1.65;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+  .bg{position:fixed;inset:0;z-index:0;pointer-events:none}
+  .bg::before{content:"";position:absolute;inset:0;
+    background:radial-gradient(ellipse 80% 50% at 50% -8%,rgba(212,172,53,.10),transparent 62%),
+      radial-gradient(ellipse 60% 40% at 80% 12%,rgba(98,140,220,.05),transparent 60%)}
+  .bg::after{content:"";position:absolute;inset:0;
+    background-image:linear-gradient(rgba(255,255,255,.014) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(255,255,255,.014) 1px,transparent 1px);background-size:48px 48px;
+    -webkit-mask-image:radial-gradient(ellipse 90% 70% at 50% 30%,#000,transparent 85%);
+    mask-image:radial-gradient(ellipse 90% 70% at 50% 30%,#000,transparent 85%)}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 24px;position:relative;z-index:1}
+  .narrow{max-width:760px}
+  a{color:inherit}
+  code,pre,.mono{font-family:'JetBrains Mono',ui-monospace,monospace}
+
+  .sigil{display:inline-block;vertical-align:middle}
+
+  nav{position:sticky;top:0;z-index:50;backdrop-filter:blur(12px) saturate(1.2);
+    background:rgba(18,15,27,.7);border-bottom:1px solid var(--ink-3)}
+  .nav-in{max-width:var(--maxw);margin:0 auto;padding:13px 24px;display:flex;align-items:center;gap:28px}
+  .brand{font-family:'Cormorant Garamond',serif;font-size:25px;font-weight:700;letter-spacing:.6px;
+    display:flex;align-items:center;gap:11px}
+  .nav-links{margin-left:auto;display:flex;gap:26px;font-size:14.5px;color:var(--bone-dim)}
+  .nav-links a{text-decoration:none;transition:color .2s}
+  .nav-links a:hover{color:var(--bone)}
+  .nav-gh{color:var(--gold)!important}
+  @media(max-width:720px){.nav-links a:not(.nav-gh){display:none}}
+
+  header{padding:84px 0 40px;text-align:center}
+  .eyebrow{font-family:'JetBrains Mono',monospace;font-size:12.5px;letter-spacing:3.5px;
+    text-transform:uppercase;color:var(--gold-soft);margin-bottom:22px}
+  h1{font-family:'Cormorant Garamond',serif;font-weight:600;font-size:clamp(40px,6.4vw,68px);
+    line-height:1.04;letter-spacing:.5px;max-width:18ch;margin:0 auto}
+  h1 em{font-style:italic;color:var(--gold)}
+  .lede{margin:26px auto 0;max-width:62ch;font-size:clamp(17px,2.3vw,20px);color:var(--bone-dim)}
+
+  section{padding:54px 0;position:relative;z-index:1}
+  .sec-eyebrow{font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:2.5px;
+    text-transform:uppercase;color:var(--gold-soft);margin-bottom:16px;display:flex;align-items:center;gap:10px}
+  .sec-eyebrow::before{content:"";width:22px;height:1px;background:var(--gold-soft)}
+  h2{font-family:'Cormorant Garamond',serif;font-weight:600;font-size:clamp(30px,4.4vw,44px);
+    line-height:1.1;letter-spacing:.4px;max-width:22ch}
+  h3{font-family:'Cormorant Garamond',serif;font-weight:600;font-size:25px;margin:30px 0 12px;letter-spacing:.3px}
+  p{margin-top:16px;color:var(--bone-dim)}
+  p.tight{margin-top:10px}
+  .narrow p{font-size:17.5px}
+  strong{color:var(--bone);font-weight:600}
+  em.q{font-style:italic;color:var(--violet)}
+  .divider{height:1px;background:linear-gradient(90deg,transparent,var(--ink-3) 30%,var(--ink-3) 70%,transparent)}
+
+  /* code + terminal blocks */
+  pre.code{background:#0d0a15;border:1px solid var(--ink-3);border-radius:12px;padding:18px 20px;
+    font-size:13px;line-height:1.7;overflow-x:auto;margin-top:22px;box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
+  .k{color:var(--gold)}.t{color:var(--violet)}.s{color:#9fc26f}.c{color:var(--bone-faint);font-style:italic}.n{color:#e0b15f}
+
+  /* terminal transcript */
+  .term{background:#0d0a15;border:1px solid var(--ink-3);border-radius:12px;margin-top:22px;overflow:hidden;
+    box-shadow:0 20px 50px -30px rgba(0,0,0,.85)}
+  .term-bar{display:flex;align-items:center;gap:7px;padding:11px 15px;border-bottom:1px solid var(--ink-3);
+    font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.5px;color:var(--bone-faint)}
+  .term-bar .d{width:9px;height:9px;border-radius:50%;background:var(--ink-3)}
+  .term-bar .lbl{margin-left:8px}
+  .term pre{padding:18px 20px;font-size:12.5px;line-height:1.75;overflow-x:auto;font-family:'JetBrains Mono',monospace}
+  .term .prompt{color:var(--gold-soft)}
+  .term .you{color:var(--bone)}
+  .term .narr{color:var(--bone-dim)}
+  .term .mech{color:var(--spectral)}
+  .term .sys{color:var(--ember)}
+  .term .dim{color:var(--bone-faint)}
+
+  .callout{background:linear-gradient(180deg,var(--ink-2),#171323);border:1px solid var(--ink-3);
+    border-left:3px solid var(--gold);border-radius:var(--r);padding:24px 28px;margin-top:28px}
+  .callout p{margin-top:10px}
+  .callout p:first-child{margin-top:0}
+
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:26px}
+  @media(max-width:760px){.two{grid-template-columns:1fr}}
+  .panel{background:linear-gradient(180deg,var(--ink-2),#171323);border:1px solid var(--ink-3);
+    border-radius:var(--r);padding:22px;overflow:hidden}
+  .panel .ptag{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:1px;text-transform:uppercase;
+    margin-bottom:12px}
+  .panel.small .ptag{color:var(--ember)}.panel.big .ptag{color:var(--spectral)}
+  .panel pre{font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.7;color:var(--bone-dim);white-space:pre-wrap}
+
+  .limits{list-style:none;margin-top:18px;display:grid;gap:13px}
+  .limits li{padding-left:24px;position:relative;color:var(--bone-dim);font-size:16px}
+  .limits li::before{content:"✦";position:absolute;left:0;color:var(--gold-soft);font-size:11px;top:5px}
+  .limits b{color:var(--bone);font-weight:600}
+
+  .btn{display:inline-flex;align-items:center;gap:9px;padding:13px 22px;border-radius:11px;
+    font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:500;text-decoration:none;
+    border:1px solid transparent;transition:transform .16s,box-shadow .25s,background .2s,border-color .2s}
+  .btn-primary{background:linear-gradient(135deg,var(--gold-bright),var(--gold));color:#1a1405}
+  .btn-primary:hover{transform:translateY(-2px);box-shadow:0 10px 34px -8px rgba(212,172,53,.45)}
+  .btn-ghost{border-color:var(--ink-3);color:var(--bone)}
+  .btn-ghost:hover{border-color:var(--gold-soft);transform:translateY(-2px);background:var(--ink-2)}
+  .cta-row{margin-top:30px;display:flex;gap:14px;flex-wrap:wrap}
+
+  footer{border-top:1px solid var(--ink-3);padding:48px 0 60px;margin-top:40px;position:relative;z-index:1}
+  .foot-in{display:flex;justify-content:space-between;flex-wrap:wrap;gap:20px;align-items:center}
+  .foot-brand{font-family:'Cormorant Garamond',serif;font-size:22px;font-weight:700;display:flex;align-items:center;gap:10px}
+  .foot-links{display:flex;gap:24px;font-size:14px;color:var(--bone-dim)}
+  .foot-links a{text-decoration:none;transition:color .2s}.foot-links a:hover{color:var(--gold)}
+  .foot-legal{margin-top:30px;color:var(--bone-faint);font-size:12.5px;font-family:'JetBrains Mono',monospace}
+  .reveal{opacity:0;transform:translateY(18px);transition:opacity .7s ease,transform .7s ease}
+  .reveal.in{opacity:1;transform:none}
+</style>
+</head>
+<body>
+<div class="bg"></div>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"></svg>
+
+<nav>
+  <div class="nav-in">
+    <a class="brand" href="index.html" style="text-decoration:none">
+      <svg class="sigil" width="26" height="26" viewBox="0 0 100 100" aria-hidden="true">
+        <circle cx="50" cy="50" r="46" fill="none" stroke="#d4ac35" stroke-width="1.4" opacity="0.5"/>
+        <path d="M 50 8 L 74.7 84 L 10.1 37 L 89.9 37 L 25.3 84 Z" fill="none" stroke="#d4ac35" stroke-width="1.4" stroke-linejoin="round"/>
+      </svg>
+      Witchcraft
+    </a>
+    <div class="nav-links">
+      <a href="index.html">Home</a>
+      <a href="#dungeon">The dungeon</a>
+      <a href="#detective">The detective</a>
+      <a href="#run">Run it</a>
+      <a class="nav-gh" href="https://github.com/sjwaller/witchcraft">GitHub ↗</a>
+    </div>
+  </div>
+</nav>
+
+<header>
+  <div class="wrap narrow">
+    <div class="eyebrow">Seeing it work</div>
+    <h1>A model that improvises freely — inside rules it <em>cannot</em> break.</h1>
+    <p class="lede">The clearest way to show what Witchcraft does is a game. In a game you can watch the model invent a story in real time, and at the same moment watch it be physically unable to cheat the mechanics. The invention is the model's; the rules are the type's. Here are two small games, run against real models — one local, one in the cloud.</p>
+  </div>
+</header>
+
+<div class="divider"></div>
+
+<!-- WHY A GAME -->
+<section>
+  <div class="wrap narrow reveal">
+    <div class="sec-eyebrow">The idea, made visible</div>
+    <h2>Why a game proves the point better than a business example.</h2>
+    <p>Witchcraft's claim is that a declared type doesn't <em>check</em> a model's output after the fact — it <strong>constrains generation as it happens</strong>, so a malformed answer is never produced in the first place. That claim is easy to state and easy to doubt.</p>
+    <p>It also has an honest seam worth naming up front. On a <strong>local</strong> model, Witchcraft controls the decoder and can <em>prove</em> the constraint — it can show the forbidden token driven to impossibility at the exact step it would have appeared. On a <strong>frontier</strong> model, the provider enforces the type as a schema on their own servers; the structure really is constrained during generation, but from the client you cannot observe the mask, so you are <em>trusting</em> that guarantee rather than proving it. Witchcraft refuses to blur the two: the provable case is the default, and the trusted case must be explicitly opted into. The games below show each in turn — the dungeon proves it locally; the detective trusts it in the cloud, with that trade-off declared in the source.</p>
+    <p>Either way, a game makes the structure impossible to fudge. You give the model room to be creative — it narrates a scene however it likes — but the same response also carries the mechanics: how much damage you take, which exits exist, whether you've won. The model can write anything it wants in the prose <em>and still</em> be unable to deal 50 damage, invent a fifth exit, or declare an impossible state. You see both halves at once: <strong>free imagination, bounded structure.</strong></p>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- DUNGEON -->
+<section id="dungeon">
+  <div class="wrap narrow reveal">
+    <div class="sec-eyebrow">Game one · a local model</div>
+    <h2>The Locked Tower</h2>
+    <p>A text dungeon. Each turn, the model is asked to fill one record: a free-text <span class="mono">narration</span>, plus the mechanics — a <span class="mono">danger</span> rating, a bounded list of <span class="mono">exits</span>, and an <span class="mono">outcome</span> that drives your health. The prose field is unconstrained. Everything else is bounded by its type.</p>
+
+    <pre class="code"><span class="c"># the mechanics are the type — the model fills it, it cannot exceed it</span>
+<span class="k">type</span> <span class="t">Outcome</span> = <span class="t">one_of</span> {
+  Nothing, Damage(amount: <span class="t">spark</span> <span class="k">in</span> <span class="n">0</span>..<span class="n">3</span>), Heal(amount: <span class="t">spark</span> <span class="k">in</span> <span class="n">0</span>..<span class="n">3</span>),
+  FindItem(item: <span class="t">one_of</span> { Key, Torch, Sword, Potion }), Victory, Death
+}
+<span class="k">type</span> <span class="t">Turn</span> = {
+  narration: <span class="t">glyph</span>,                                  <span class="c"># free text</span>
+  outcome:   <span class="t">Outcome</span>,                                <span class="c"># bounded effect</span>
+  exits:     <span class="t">list of</span> <span class="n">0</span>..<span class="n">4</span> <span class="t">of</span> <span class="t">one_of</span> { North, South, East, West },
+  danger:    <span class="t">spark</span> <span class="k">in</span> <span class="n">0</span>..<span class="n">10</span>
+}</pre>
+
+    <h3>The same game, two models</h3>
+    <p>Witchcraft never names a model in the program — it names a <em>need</em>, bound to a model by a one-line config file. So you can run the identical game against a tiny model and a large one, and change nothing but that file. This is the single most revealing thing to watch.</p>
+
+    <div class="two">
+      <div class="panel small reveal">
+        <div class="ptag">0.5B local model</div>
+        <pre>You wake in a cold stone cell. HP: 10
+
+> look around
+The story is just beginning.
+  danger 0/10 · recover 1 · HP 12
+  exits [North, South]
+
+> north
+The journey was told from
+north to south.
+  danger 5/10 · recover 2 · HP 14
+  exits [North, South, East, West]
+
+> north
+I am in a situation where I
+need to find a key.
+  danger 10/10 · found Key
+  exits [North, East]</pre>
+      </div>
+      <div class="panel big reveal">
+        <div class="ptag">7B local model · same program</div>
+        <pre>You wake in a cold stone cell. HP: 10
+
+> cry for help
+The cry for help echoes through the
+dark corridor, drawing the monster
+closer. The danger level increases.
+  danger 8/10 · take 2 · HP 8
+  exits []
+
+> hide
+You carefully head south, staying
+hidden in the shadows.
+  danger 2/10 · found Torch
+  exits [South]</pre>
+      </div>
+    </div>
+
+    <div class="callout reveal">
+      <p>Look at what changed and what didn't. The <strong>narration</strong> went from simple, sometimes meta or rambling sentences to coherent, responsive prose — that field is free, so it tracks the model behind it. The <strong>mechanics</strong> were flawless in both: danger stayed in 0–10, exits never exceeded four real directions, damage and healing stayed within their bounds, items came only from the declared set — on the 0.5B model just as strictly as on the 7B. <strong>The storyteller got better; the rules never moved.</strong> That gap is the whole thesis, and you cross it by editing one line of a config file.</p>
+    </div>
+
+    <p>And on a local model this constraint isn't a hopeful instruction to the model — it is enforced at the moment of generation and can be <strong>demonstrated</strong>: Witchcraft's test suite shows, against real model weights, that a forbidden token is driven to impossibility at the exact decode step it would have appeared. The type is part of the computation, not a filter bolted on after.</p>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- DETECTIVE -->
+<section id="detective">
+  <div class="wrap narrow reveal">
+    <div class="sec-eyebrow">Game two · a frontier model</div>
+    <h2>The Interrogation</h2>
+    <p>The same principle, pushed harder, against a cloud model. You question a suspect; each turn the model returns what she says (free text) and a richer set of constrained facts — her demeanour, whether she's lying, her stress, and a <strong>branching "tell"</strong>: a tagged union where each branch carries its own payload.</p>
+
+    <pre class="code"><span class="c"># a branching union — each arm is a distinct, constrained shape</span>
+<span class="k">type</span> <span class="t">Tell</span> = <span class="t">one_of</span> {
+  Nothing,
+  Slip(detail: <span class="t">glyph</span>),       <span class="c"># accidentally reveals something</span>
+  Deflect(topic: <span class="t">glyph</span>),     <span class="c"># changes the subject</span>
+  Accuse(who: <span class="t">glyph</span>),        <span class="c"># points elsewhere</span>
+  Confess(crime: <span class="t">glyph</span>)       <span class="c"># cracks</span>
+}</pre>
+
+    <div class="term reveal">
+      <div class="term-bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="lbl">witch run detective.witch — frontier (OpenAI gpt-4o-mini)</span></div>
+<pre><span class="dim">=== THE INTERROGATION ===
+Suspect: Marlene Vasquez. A body in the library. She says she's innocent.</span>
+
+<span class="prompt">> ask:</span> <span class="you">where were you that night?</span>
+<span class="narr">Marlene: "That's none of your concern, detective."</span>
+  <span class="mech">[Defensive · stress 5/10 · lying]</span>
+  <span class="mech">>> Deflect → "my alibi"</span>
+
+<span class="prompt">> ask:</span> <span class="you">we found your scarf at the scene</span>
+<span class="narr">Marlene: "I... I don't see why that matters."</span>
+  <span class="mech">[Nervous · stress 8/10]</span>
+  <span class="mech">>> Deflect → "Why it's irrelevant where I was."</span></pre>
+    </div>
+
+    <div class="callout reveal">
+      <p>The model chose a branch (<span class="mono">Deflect</span>) and generated a fitting payload (<span class="q">"my alibi"</span>) — and your code can act on that union as native, typed data, with no parsing and no defensive checks, because a malformed or out-of-set response was never reachable. Whether she deflects or confesses is the model's judgement; that the answer is a <em>valid, well-typed</em> move is the language's guarantee.</p>
+    </div>
+
+    <h3>Reaching the cloud is a decision you make in the source</h3>
+    <p>This game talks to a remote API, and Witchcraft does not let that happen quietly. A program is on-device-only by default. To reach the network, the source must say so — visibly, where a reviewer reads it. The interrogation program will <strong>refuse to start</strong> otherwise:</p>
+    <pre class="code"><span class="k">with grant</span> permit(network) {        <span class="c"># reach the network at all</span>
+  <span class="k">with grant</span> permit(unsafe_inference) {  <span class="c"># accept the honesty caveat below</span>
+    <span class="k">divine</span> r: <span class="t">Reply</span> <span class="k">from</span> (question) <span class="k">using</span> suspect ...
+  }
+}</pre>
+    <p class="tight">A cloud provider enforces the type as a server-side schema, with no observable token-level mask — so Witchcraft cannot <em>prove</em> the constraint the way it can locally. It is honest about that: such an engine is marked non-litmus-safe, and a strict use refuses it unless the source explicitly accepts the downgrade. The capability is granted in the open, never assumed.</p>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- HONEST LIMITS -->
+<section>
+  <div class="wrap narrow reveal">
+    <div class="sec-eyebrow">What it does and doesn't promise</div>
+    <h2>The guarantee is precise — and so are its edges.</h2>
+    <p>The point of these games is a specific, bounded claim. It is worth being exact about where it stops:</p>
+    <ul class="limits">
+      <li><b>Shape is guaranteed; quality is not.</b> Every answer is well-formed and in-type. It is not necessarily <em>good</em> — a weak model gives well-shaped but poor judgements, as the 0.5B narration shows. Choosing a capable model is your job; the type only guarantees the form.</li>
+      <li><b>Local generation is provable; cloud generation is trusted.</b> A local engine masks tokens observably, so the constraint is demonstrated. A frontier API enforces a schema server-side without an observable mask, so it is honestly marked non-litmus-safe and must be opted into.</li>
+      <li><b>Free fields are exactly as free as you wrote them.</b> A <span class="mono">glyph</span> field is unconstrained prose by design. The guarantee is only ever as tight as the type — constrain what your code must trust, leave free what a human will read.</li>
+      <li><b>This is v0.1.</b> The core is proven and verified against real weights; it is a research language, presented as one.</li>
+    </ul>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- RUN IT -->
+<section id="run">
+  <div class="wrap narrow reveal">
+    <div class="sec-eyebrow">Run it yourself</div>
+    <h2>Both games are in the repository.</h2>
+    <p>The default build is offline and deterministic, so you can read and run the programs with no model installed. Point a manifest at a local GGUF model (via llama.cpp) or a frontier API to see them come alive.</p>
+    <pre class="code"><span class="prompt">$</span> <span class="you">git clone https://github.com/sjwaller/witchcraft.git && cd witchcraft</span>
+<span class="prompt">$</span> <span class="you">cargo build --release --features llama</span>
+
+<span class="c"># the dungeon, against a local model named in the manifest</span>
+<span class="prompt">$</span> <span class="you">./target/release/witch run examples/dungeon_master.witch \
+      --manifest examples/manifests/dungeon.llama.toml</span></pre>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="https://github.com/sjwaller/witchcraft/tree/main/examples">See the examples →</a>
+      <a class="btn btn-ghost" href="index.html">Back to overview</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap foot-in">
+    <a class="foot-brand" href="index.html" style="text-decoration:none">
+      <svg class="sigil" width="22" height="22" viewBox="0 0 100 100" aria-hidden="true">
+        <circle cx="50" cy="50" r="46" fill="none" stroke="#d4ac35" stroke-width="1.4" opacity="0.5"/>
+        <path d="M 50 8 L 74.7 84 L 10.1 37 L 89.9 37 L 25.3 84 Z" fill="none" stroke="#d4ac35" stroke-width="1.4" stroke-linejoin="round"/>
+      </svg>
+      Witchcraft
+    </a>
+    <div class="foot-links">
+      <a href="index.html">Home</a>
+      <a href="https://github.com/sjwaller/witchcraft#readme">README</a>
+      <a href="https://github.com/sjwaller/witchcraft/blob/main/LANGUAGE.md">Language Guide</a>
+      <a href="https://www.sjwaller.com/discussion/witchcraft">The paper</a>
+    </div>
+  </div>
+  <div class="wrap foot-legal">Transcripts on this page are real runs, lightly trimmed for length. Narration quality reflects the model used; mechanics are type-bounded regardless. · getwitch.dev</div>
+</footer>
+
+<script>
+  const rm = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if(rm){document.querySelectorAll('.reveal').forEach(e=>e.classList.add('in'));}
+  else{
+    const io=new IntersectionObserver((es)=>{es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target);}})},{threshold:.12});
+    document.querySelectorAll('.reveal').forEach(e=>io.observe(e));
+  }
+</script>
+</body>
+</html>

@@ -12,7 +12,7 @@ Bootstrap shipped `fn` and `print` as plain host keywords per an early reading o
 - Introduce `listen(prompt: glyph) -> glyph` as a blocking stdin read (trailing newline stripped).
 - `speak` renders like today's `print` (value display + newline to stdout).
 - Compiled artifacts call the same runtime ABI (`w_speak`, `w_listen`).
-- Encode the stopping rule and non-OO note in LANGUAGE_GUIDE.
+- Encode the stopping rule and non-OO note in LANGUAGE.md.
 
 **Non-Goals:**
 
@@ -58,7 +58,7 @@ No dual-keyword period. Update all examples and tests in the same change. `opens
 ## Migration Plan
 
 1. Land compiler/runtime/codegen + ABI.
-2. Mechanical replace in examples, tests, README, LANGUAGE_GUIDE, grammar.ebnf.
+2. Mechanical replace in examples, tests, README, LANGUAGE.md, grammar.ebnf.
 3. Verify `witch check`/`witch run`/`grimoire build` on flagship examples.
 4. README breaking-change note: `fn`→`define`, `print`→`speak`; new `listen`.
 

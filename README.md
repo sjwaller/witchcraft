@@ -23,7 +23,9 @@ speak "feeling: ${r.feeling}, urgency: ${r.urgency}/10"
 
 `urgency` can only come back as a number 0–10; `feeling` can only be one of those five — enforced *during* generation. The model named `MoodReader` is resolved from a manifest at run time.
 
-> **Status: v0.1.** The core is proven end to end — the type genuinely constrains generation against real `llama.cpp` weights, and a compiled program runs real inference as a standalone binary. Some surface (richer agents, capability tiers) is intentionally deferred; see [Limitations](#limitations).
+**Home:** [getwitch.dev](https://getwitch.dev) · **See it work:** [the games walkthrough](https://getwitch.dev/walkthrough.html) — two real runs, local and frontier · **Learn it:** [LANGUAGE.md](./LANGUAGE.md)
+
+> **Status: v0.2.** The core is proven end to end — the type genuinely constrains generation against real `llama.cpp` weights, and a compiled program runs real inference as a standalone binary. All three engines are exercised against live backends: the offline **Mock**, a **local llama** model (constraint *proven* by token-level masking), and a **frontier** API (OpenAI/Anthropic, constraint *trusted* server-side). Some surface (richer agents, capability tiers) is intentionally deferred; see [Limitations](#limitations).
 
 ---
 
@@ -34,6 +36,8 @@ speak "feeling: ${r.feeling}, urgency: ${r.urgency}/10"
 - [Your first program](#your-first-program)
 - [Running against a real model](#running-against-a-real-model)
 - [Swapping models with zero code change](#swapping-models-with-zero-code-change)
+- [Engines](#engines)
+- [Examples](#examples)
 - [Compiling to a standalone binary](#compiling-to-a-standalone-binary)
 - [The CLI](#the-cli)
 - [Language tour](#language-tour)
@@ -207,6 +211,35 @@ Because reaching the network is a consequence the program author must take respo
 
 ---
 
+## Engines
+
+A program names *needs*, never models; a manifest binds each need to an **engine**. Three engines exist, and the difference between them is **whether the type constraint can be *proven* to have shaped generation** — the litmus property:
+
+| Engine | Build feature | Locality | Litmus | What the type guarantees |
+|--------|---------------|----------|--------|--------------------------|
+| **Mock** | (default) | offline | litmus-safe | Deterministic, in-type output per seed. Doesn't "understand" the input — it exists so you can develop and test a program's *shape and logic* with no model installed. |
+| **llama** | `--features llama` | local | **litmus-safe — constraint PROVEN** | The output type is compiled to a GBNF grammar that masks the model's tokens *as it generates*, against real `llama.cpp` weights. A value outside the type is unreachable, and the falsification test demonstrates the masking. |
+| **frontier** | `--features frontier` | network | **non-litmus-safe — constraint TRUSTED** | The output type is sent as a strict JSON schema the provider (OpenAI/Anthropic) enforces *server-side*. Witchcraft cannot observe a token-level mask, so the constraint is **trusted, not locally provable** — usable only with explicit `permit(network)` + `permit(unsafe_inference)` in the source. |
+
+In every case the guarantee is **structural, not semantic** (§8): the type guarantees the *shape* of the answer; it never guarantees the answer is *good*. A small or distant model can return a well-formed but poor judgement — choosing a capable enough model is your responsibility.
+
+---
+
+## Examples
+
+Working programs live in [`examples/`](https://github.com/sjwaller/witchcraft/tree/main/examples). The four headline programs:
+
+- **`triage_flagship.witch`** — the flagship: all the core primitives together (`divine`, `enact`, memory, familiar). Runs on the offline **Mock** engine by default; bind any engine via a manifest.
+- **`dungeon_master.witch`** — an interactive `listen → divine → enact` game loop with bounded lists; free-text narration (`glyph`) alongside grammar-constrained mechanics. Built for a **local llama** model (`examples/manifests/dungeon.llama.toml`), and runs offline on Mock too.
+- **`detective.witch`** — a richer interrogation game exercising **nested variant types**; runs against a **frontier** (OpenAI) model (`examples/manifests/detective.openai.toml`) and needs `permit(network)` + `permit(unsafe_inference)`.
+- **`frontier_test.witch`** — the minimal **frontier** demo: sentiment classification against OpenAI (`examples/manifests/sentiment.openai.toml`), same two permits.
+
+Also in the folder: `strict_divine.witch` (the strict-engine refusal + `permit(network)`), `host.witch` (plain host-language features), and `triage.witch`.
+
+See the [games walkthrough](https://getwitch.dev/walkthrough.html) for real runs of the dungeon master (local, proven) and the detective (frontier, trusted) side by side.
+
+---
+
 ## Compiling to a standalone binary
 
 `grimoire` compiles a `.witch` program to a self-contained native executable.
@@ -351,13 +384,15 @@ crates/
   witchcraft/         # the language: parser, type checker, interpreter, engines
   witchcraft-codegen/ # the Cranelift native backend
   witchcraft-runtime/ # the runtime linked into compiled artifacts
-examples/             # sample programs
-  triage_flagship.witch   # the full example: all four primitives together
-  triage.witch
-  dungeon_master.witch    # interactive listen -> divine -> enact game loop
+examples/             # sample programs (see the Examples section above)
+  triage_flagship.witch   # the flagship: core primitives together
+  dungeon_master.witch    # local game: listen -> divine -> enact, bounded lists
+  detective.witch         # frontier game: nested variant types
+  frontier_test.witch     # minimal frontier sentiment demo
   strict_divine.witch     # demonstrates permit(network) + the strict-engine refusal
   host.witch              # plain host-language features
-  manifests/              # example engine bindings (laptop/llama/cloud/frontier)
+  triage.witch
+  manifests/              # example engine bindings (laptop/llama/cloud/frontier/openai)
 openspec/             # the spec-driven design history (proposals, specs, tasks)
 ```
 
@@ -370,19 +405,6 @@ cargo test -p witchcraft --features llama        # real-model tests (needs a GGU
 
 The real-model tests skip themselves unless you point them at a model, e.g.
 `WITCHCRAFT_GGUF=./models/<model>.gguf cargo test -p witchcraft --features llama -- --nocapture`.
-
----
-
-## Breaking changes (keyword rename)
-
-| Old | New | Register |
-|-----|-----|----------|
-| `fn` | `define` | plain |
-| `print` | `speak` | human boundary (stdout) |
-| — | `listen(prompt)` | human boundary (stdin) |
-
-There are no deprecation aliases — update source, examples, and docs mechanically.
-See [docs/LANGUAGE_GUIDE.md](docs/LANGUAGE_GUIDE.md) for the naming stopping rule.
 
 ---
 

@@ -194,6 +194,7 @@
     <p class="lede">Witchcraft makes inference a built-in operation. You declare the shape of the answer you need, and that shape constrains the model as it generates — so a malformed answer isn't rejected afterwards, it's unreachable. The model itself lives outside your code, swappable by a config file.</p>
     <div class="cta-row">
       <a class="btn btn-primary" href="#start">Get started →</a>
+      <a class="btn btn-ghost" href="walkthrough.html">See it work →</a>
       <a class="btn btn-ghost" href="https://github.com/sjwaller/witchcraft">View on GitHub</a>
     </div>
 
@@ -281,7 +282,7 @@
           <span class="k">oracle</span> reader = <span class="k">summon</span> <span class="s">"MoodReader"</span><br><br>
           <span class="k">divine</span> r: <span class="t">Reading</span> <span class="k">from</span> (<span class="s">"the site keeps logging me out"</span>) <span class="k">using</span> reader<br>
           &nbsp;&nbsp;<span class="k">with</span> confidence >= <span class="n">0.0</span> fallback { feeling: Annoyed, urgency: <span class="n">0</span> }<br><br>
-          <span class="k">print</span> <span class="s">"feeling: ${r.feeling}, urgency: ${r.urgency}/10"</span></div>
+          <span class="k">speak</span> <span class="s">"feeling: ${r.feeling}, urgency: ${r.urgency}/10"</span></div>
         </div>
       </div>
       <div class="step reveal">
@@ -364,7 +365,11 @@ gguf = <span class="s">"./models/qwen2.5-7b.gguf"</span></pre>
         <div class="rt">GETTING STARTED</div><h3>README</h3>
         <p>Build, install, run, and compile your first program. The practical front door.</p><div class="arr">Open →</div>
       </a>
-      <a class="rcard reveal" href="https://github.com/sjwaller/witchcraft/blob/main/docs/LANGUAGE_GUIDE.md">
+      <a class="rcard reveal" href="walkthrough.html">
+        <div class="rt">SEE IT WORK</div><h3>Games walkthrough</h3>
+        <p>Two real runs — a local dungeon master and a frontier interrogation — showing constraint <em>proven</em> locally vs <em>trusted</em> server-side.</p><div class="arr">Watch it run →</div>
+      </a>
+      <a class="rcard reveal" href="https://github.com/sjwaller/witchcraft/blob/main/LANGUAGE.md">
         <div class="rt">LEARN THE LANGUAGE</div><h3>Language Guide</h3>
         <p>Every construct explained from scratch — types, <span class="mono">divine</span>, memory, agents, capabilities.</p><div class="arr">Read the guide →</div>
       </a>
@@ -398,7 +403,7 @@ gguf = <span class="s">"./models/qwen2.5-7b.gguf"</span></pre>
       <div class="foot-col"><h4>Start</h4>
         <a href="https://github.com/sjwaller/witchcraft#readme">README</a><a href="#start">Quickstart</a><a href="https://github.com/sjwaller/witchcraft/releases">Downloads</a></div>
       <div class="foot-col"><h4>Learn</h4>
-        <a href="https://github.com/sjwaller/witchcraft/blob/main/docs/LANGUAGE_GUIDE.md">Language Guide</a><a href="https://github.com/sjwaller/witchcraft/tree/main/examples">Examples</a><a href="https://www.sjwaller.com/discussion/witchcraft">Discussion paper</a></div>
+        <a href="https://github.com/sjwaller/witchcraft/blob/main/LANGUAGE.md">Language Guide</a><a href="https://github.com/sjwaller/witchcraft/tree/main/examples">Examples</a><a href="https://www.sjwaller.com/discussion/witchcraft">Discussion paper</a></div>
       <div class="foot-col"><h4>Source</h4>
         <a href="https://github.com/sjwaller/witchcraft">GitHub</a><a href="https://github.com/sjwaller/witchcraft/tree/main/openspec">OpenSpec</a><a href="https://github.com/sjwaller/witchcraft/issues">Issues</a></div>
     </div>

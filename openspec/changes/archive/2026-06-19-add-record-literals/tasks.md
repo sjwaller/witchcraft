@@ -17,5 +17,5 @@
 
 ## 4. Docs and validation
 
-- [x] 4.1 LANGUAGE_GUIDE: record literals section; note non-OO "plain values"
+- [x] 4.1 LANGUAGE.md: record literals section; note non-OO "plain values"
 - [x] 4.2 `openspec validate add-record-literals --strict`; tests in `crates/witchcraft/tests/`

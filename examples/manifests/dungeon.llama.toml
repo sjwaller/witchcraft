@@ -11,4 +11,4 @@ locality = "local"
 
 [engine.dm-local]
 kind = "llama"
-gguf = "models/qwen2.5-0.5b-instruct-q4_k_m.gguf"
+gguf = "models/qwen2.5-7b-instruct-q4_k_m.gguf"

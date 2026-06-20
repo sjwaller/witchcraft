@@ -71,8 +71,9 @@ and variables.
 | **Plain** | `define`, `let`, `var`, `while`, `if` | Universal computation — never themed |
 | **Evocative** | `oracle`, `summon`, `divine`, `enact`, `speak`, `listen` | Intelligence or human-boundary seam only |
 
-**Stopping rule:** abbreviations become plain words (`fn` → `define`); plain
-computation keywords stay as-is; evocative names are reserved for the seam.
+**Stopping rule:** abbreviations become plain words (the function keyword is
+spelled out as `define`, never an abbreviation); plain computation keywords stay
+as-is; evocative names are reserved for the seam.
 
 #### Not object-oriented
 

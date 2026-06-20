@@ -52,7 +52,7 @@ This change alone does **not** pass the litmus — it names types host-side. The
 
 ## Risks / Trade-offs
 
-- **[Two `of` tokens feel verbose]** → Accept for clarity; document in LANGUAGE_GUIDE.
+- **[Two `of` tokens feel verbose]** → Accept for clarity; document in LANGUAGE.md.
 - **[Unbounded host lists]** → Allowed for `nearest`/batch; forbidden at `divine` output sites in #4.
 
 ## Open Questions

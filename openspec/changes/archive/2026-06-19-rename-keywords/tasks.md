@@ -19,7 +19,7 @@
 ## 4. Mechanical migration
 
 - [x] 4.1 Update ALL `examples/**/*.witch`, integration tests, and `crates/**/tests`
-- [x] 4.2 Update README, LANGUAGE_GUIDE (naming stopping rule + non-OO note), quick reference
+- [x] 4.2 Update README, LANGUAGE.md (naming stopping rule + non-OO note), quick reference
 - [x] 4.3 README breaking-change migration table (`fn`→`define`, `print`→`speak`)
 
 ## 5. Validation

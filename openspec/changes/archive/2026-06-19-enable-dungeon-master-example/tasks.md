@@ -18,7 +18,7 @@
 ## 4. Documentation
 
 - [x] 4.1 README examples list + one paragraph on interactive pattern
-- [x] 4.2 LANGUAGE_GUIDE section: listen → divine → enact; §8 honesty; cross-link naming rule + non-OO note
+- [x] 4.2 LANGUAGE.md section: listen → divine → enact; §8 honesty; cross-link naming rule + non-OO note
 - [x] 4.3 Verify no stale `fn`/`print`/`input` in docs or example
 
 ## 5. Validation

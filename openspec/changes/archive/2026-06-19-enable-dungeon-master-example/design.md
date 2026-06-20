@@ -41,9 +41,9 @@ Update `examples/dungeon_master.witch` in place — not a separate `dungeon_mast
 - **Run test:** pipe stdin (`look\n`, `go north\n`, …) with `--seed N`; assert stdout contains structural markers (`HP:`, `exits:`, win/loss banners).
 - **Optional compiled test:** `grimoire build` + run binary with same stdin (if host+I/O ABI stable).
 
-### D3: README / LANGUAGE_GUIDE placement
+### D3: README / LANGUAGE.md placement
 
-New LANGUAGE_GUIDE section **"Interactive programs: listen → divine → enact"** after divine/enact tour. Include naming stopping rule box and non-OO paragraph (or cross-link to section introduced in #1).
+New LANGUAGE.md section **"Interactive programs: listen → divine → enact"** after divine/enact tour. Include naming stopping rule box and non-OO paragraph (or cross-link to section introduced in #1).
 
 ### D4: Phased landing (if #4 delayed)
 

@@ -13,5 +13,5 @@
 ## 3. Tests and docs
 
 - [x] 3.1 Tests: parse, resolve, literal length errors, element type errors
-- [x] 3.2 LANGUAGE_GUIDE: list types section (host-side; pointer to #4 for divine)
+- [x] 3.2 LANGUAGE.md: list types section (host-side; pointer to #4 for divine)
 - [x] 3.3 `openspec validate add-list-types --strict`

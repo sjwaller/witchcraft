@@ -16,8 +16,8 @@ The repository SHALL ship `examples/dungeon_master.witch` that type-checks with 
 - **THEN** the program completes and emits structural game output (HP lines, exit information, and a win/loss/timeout banner)
 
 ### Requirement: Interactive game pattern is documented
-The LANGUAGE_GUIDE SHALL document the interactive game loop pattern (`listen` → `divine` → `enact`) using the dungeon master example, and SHALL state that narration fields (`glyph`) are free-form while mechanical fields are grammar-constrained. Documentation SHALL NOT claim model output correctness (§8).
+The LANGUAGE.md guide SHALL document the interactive game loop pattern (`listen` → `divine` → `enact`) using the dungeon master example, and SHALL state that narration fields (`glyph`) are free-form while mechanical fields are grammar-constrained. Documentation SHALL NOT claim model output correctness (§8).
 
 #### Scenario: Guide references dungeon master
-- **WHEN** a reader opens the interactive programs section of LANGUAGE_GUIDE
+- **WHEN** a reader opens the interactive programs section of LANGUAGE.md
 - **THEN** they find a walkthrough pointing at `examples/dungeon_master.witch`

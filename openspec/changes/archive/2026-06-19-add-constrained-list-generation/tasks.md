@@ -19,7 +19,7 @@
 
 - [x] 4.1 Frontier: array schema with minItems/maxItems only on litmus-safe path
 - [x] 4.2 Falsification test: strict vs weakened list bound → distinguishable output (Mock minimum)
-- [x] 4.3 Document §8 honesty in LANGUAGE_GUIDE bounded-list section
+- [x] 4.3 Document §8 honesty in LANGUAGE.md bounded-list section
 
 ## 5. Integration gate (independent of #5 example change)
 

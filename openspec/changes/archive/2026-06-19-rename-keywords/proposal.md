@@ -7,7 +7,7 @@ The paper's §7 naming policy ("keep the name, let the plumbing look like plumbi
 - **BREAKING:** `fn` → `define` (plain register — full word, not whimsy).
 - **BREAKING:** `print` → `speak` (human-facing terminal output on stdout; not generic file/pipe I/O).
 - **NEW:** `listen(prompt)` builtin — blocking read of one line from stdin (human-originated input). Evocative register at the human boundary.
-- Update lexer, parser, AST, type checker, interpreter, lower/codegen, runtime ABI (`w_speak`, `w_listen`), `docs/grammar.ebnf`, all `.witch` examples, README, and LANGUAGE_GUIDE.
+- Update lexer, parser, AST, type checker, interpreter, lower/codegen, runtime ABI (`w_speak`, `w_listen`), `docs/grammar.ebnf`, all `.witch` examples, README, and LANGUAGE.md.
 - Document the **naming-philosophy stopping rule** and the **deliberately not object-oriented** data model (plain typed values + functions; capabilities for encapsulation; no classes/inheritance).
 - **No other renames.** `let`, `var`, `while`, `if`, `oracle`, `summon`, `divine`, `enact`, etc. stay as-is.
 
@@ -27,5 +27,5 @@ The paper's §7 naming policy ("keep the name, let the plumbing look like plumbi
 ## Impact
 
 - **Breaking** for every existing `.witch` program and doc snippet using `fn` or `print`.
-- Touches `crates/witchcraft` (lexer, parser, token, interp, typeck, lower), `crates/witchcraft-runtime` (sink + new listen ABI), `crates/witchcraft-codegen`, all examples/tests, README, LANGUAGE_GUIDE, `docs/grammar.ebnf`.
+- Touches `crates/witchcraft` (lexer, parser, token, interp, typeck, lower), `crates/witchcraft-runtime` (sink + new listen ABI), `crates/witchcraft-codegen`, all examples/tests, README, LANGUAGE.md, `docs/grammar.ebnf`.
 - Independent of inference-runtime work; safe to land first. Unblocks `enable-dungeon-master-example` (needs `listen`/`speak`).
